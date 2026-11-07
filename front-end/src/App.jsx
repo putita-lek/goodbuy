@@ -9,7 +9,7 @@ import SidePanel from './components/SidePanel.jsx'
 import ReviewPage from './components/ReviewPage.jsx'
 import SummaryPage from './components/SummaryPage.jsx'
 import { optionsForItem } from './data/shops.js'
-import { submitPreference } from './api/submitPreference.js'
+import { submitPreference, getOptionResult } from './api/submitPreference.js'
 
 const INITIAL_PREFS = {
   priorities: [], // order = rank
@@ -23,6 +23,18 @@ const INITIAL_PREFS = {
 
 const INITIAL_ITEMS = []
 
+function ErrorBanner({ message }) {
+  if (!message) return null
+  return (
+    <p
+      role="alert"
+      className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[15px] text-red-700"
+    >
+      {message}
+    </p>
+  )
+}
+
 export default function App() {
   const [step, setStep] = useState(1)
   const [prefs, setPrefs] = useState(INITIAL_PREFS)
@@ -32,14 +44,22 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
+  // Result of GET /shopping-item/option-result (fetched when going to step 3)
+  const [optionResult, setOptionResult] = useState(null)
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false)
+  const [summaryError, setSummaryError] = useState(null)
+
   const handleReviewMyList = async () => {
     if (isSubmitting) return
     setIsSubmitting(true)
     setSubmitError(null)
+    setSummaryError(null)
+    setOptionResult(null) // a new submission means any earlier results are stale
 
     try {
       const id = await submitPreference(prefs, items)
       setSessionId(id)
+      await loadShoppingItemOptionResult(id) // fetch the options immediately after submission
       setStep(2) // only move on once the API has accepted the preferences
     } catch (err) {
       setSubmitError(err.message)
@@ -48,9 +68,36 @@ export default function App() {
     }
   }
 
-  const handleSeeSummaryClicked = () => {
-    // call api
-    setStep(3)
+  const loadShoppingItemOptionResult = async (sessionId) => {
+      if (isLoadingSummary) return
+      setIsLoadingSummary(true)
+      setSummaryError(null)
+
+      try {
+        const result = await getOptionResult(sessionId)
+        setOptionResult(result)
+        setStep(3) // only move on once the options have loaded
+      } catch (err) {
+        setSummaryError(err.message) // stay on step 2 so the user can retry
+      } finally {
+        setIsLoadingSummary(false)
+      }
+  }
+
+  const handleSeeSummaryClicked = async () => {
+    // if (isLoadingSummary) return
+    // setIsLoadingSummary(true)
+    // setSummaryError(null)
+
+    // try {
+    //   const result = await getOptionResult(sessionId)
+    //   setOptionResult(result)
+    //   setStep(3) // only move on once the options have loaded
+    // } catch (err) {
+    //   setSummaryError(err.message) // stay on step 2 so the user can retry
+    // } finally {
+    //   setIsLoadingSummary(false)
+    // }
   }
 
   // Options per item, ranked by the current preferences. A manual pick wins
@@ -113,14 +160,7 @@ export default function App() {
                   </button>
                 </div>
 
-                {submitError && (
-                  <p
-                    role="alert"
-                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[15px] text-red-700"
-                  >
-                    {submitError}
-                  </p>
-                )}
+                <ErrorBanner message={submitError} />
               </div>
               <SidePanel />
             </div>
@@ -128,19 +168,32 @@ export default function App() {
         )}
 
         {step === 2 && (
-          <ReviewPage
-            plan={plan}
-            prefs={prefs}
-            total={total}
-            sessionId={sessionId}
-            onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-          />
+          <div className="flex flex-col gap-6">
+            <ReviewPage
+              plan={plan}
+              prefs={prefs}
+              total={total}
+              sessionId={sessionId}
+              isNextLoading={isLoadingSummary}
+              onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
+              onBack={() => {
+                setSummaryError(null)
+                setStep(1)
+              }}
+              onNext={handleSeeSummaryClicked}
+            />
+            <ErrorBanner message={summaryError} />
+          </div>
         )}
 
         {step === 3 && (
-          <SummaryPage plan={plan} prefs={prefs} total={total} onBack={() => setStep(2)} />
+          <SummaryPage
+            plan={plan}
+            prefs={prefs}
+            total={total}
+            optionResult={optionResult}
+            onBack={() => setStep(2)}
+          />
         )}
       </main>
 
