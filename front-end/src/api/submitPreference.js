@@ -155,7 +155,10 @@ export async function getOptionResult(sessionId) {
 // POST /submit-preference -> resolves with the session id.
 export async function submitPreference(prefs, items) {
   try {
-    const userLocation = await geocodeLocation(prefs.location)
+
+    const userLocation = prefs.latitude != null && prefs.longitude != null
+    ? { latitude: Number(prefs.latitude), longitude: Number(prefs.longitude) }
+    : await geocodeLocation(prefs.location)
     const payload = buildPayload(prefs, items, userLocation)
 
     const { data } = await api.post('/submit-preference', payload)
