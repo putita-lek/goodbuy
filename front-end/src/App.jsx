@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowRight, Clover } from 'lucide-react'
+import { ArrowRight, Clover, Loader2 } from 'lucide-react'
 import Header from './components/Header.jsx'
 import Stepper from './components/Stepper.jsx'
 import PageIntro from './components/PageIntro.jsx'
@@ -9,33 +9,49 @@ import SidePanel from './components/SidePanel.jsx'
 import ReviewPage from './components/ReviewPage.jsx'
 import SummaryPage from './components/SummaryPage.jsx'
 import { optionsForItem } from './data/shops.js'
+import { submitPreference } from './api/submitPreference.js'
 
 const INITIAL_PREFS = {
-  priorities: ['cheapest', 'closest'], // order = rank
-  values: ['local', 'organic'], // order = rank
+  priorities: [], // order = rank
+  values: [], // order = rank
   location: '', // free text the user types (or "Current location")
   latitude: null, // set by "Use my current location"; sent to the API as user_location
   longitude: null,
-  maxDistance: '2',
-  budget: '35.00',
+  maxDistance: '',
+  budget: '',
 }
 
-// quantity is a number (sent to the API as item_quantity).
-// id is sent as item_id so API results can be matched back to the right item.
-const INITIAL_ITEMS = [
-  ['Vine tomatoes 500g', 1],
-  ['Sourdough bread loaf', 1],
-  ['Free-range eggs (6 pack)', 1],
-  ['Whole milk 1 litre', 2],
-  ['Baby spinach 200g', 1],
-  ['Gala apples 1kg', 1],
-].map(([description, quantity], i) => ({ id: `item-${i + 1}`, description, quantity }))
+const INITIAL_ITEMS = []
 
 export default function App() {
   const [step, setStep] = useState(1)
   const [prefs, setPrefs] = useState(INITIAL_PREFS)
   const [items, setItems] = useState(INITIAL_ITEMS)
   const [selections, setSelections] = useState({}) // itemId -> shopId the user picked
+  const [sessionId, setSessionId] = useState(null) // returned by POST /submit-preference
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState(null)
+
+  const handleReviewMyList = async () => {
+    if (isSubmitting) return
+    setIsSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const id = await submitPreference(prefs, items)
+      setSessionId(id)
+      setStep(2) // only move on once the API has accepted the preferences
+    } catch (err) {
+      setSubmitError(err.message)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleSeeSummaryClicked = () => {
+    // call api
+    setStep(3)
+  }
 
   // Options per item, ranked by the current preferences. A manual pick wins
   // if that shop is still an option; otherwise the best match is chosen.
@@ -81,13 +97,30 @@ export default function App() {
                   <p className="text-[15px] text-muted">Next: check your items and estimated prices</p>
                   <button
                     type="button"
-                    disabled={!canContinue}
-                    onClick={() => setStep(2)}
+                    disabled={!canContinue || isSubmitting}
+                    onClick={handleReviewMyList}
                     className="flex items-center gap-3 rounded-lg bg-brand-600 px-6 py-4 text-[17px] font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Review my list <ArrowRight className="size-5" />
+                    {isSubmitting ? (
+                      <>
+                        Sending… <Loader2 className="size-5 animate-spin" />
+                      </>
+                    ) : (
+                      <>
+                        Review my list <ArrowRight className="size-5" />
+                      </>
+                    )}
                   </button>
                 </div>
+
+                {submitError && (
+                  <p
+                    role="alert"
+                    className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[15px] text-red-700"
+                  >
+                    {submitError}
+                  </p>
+                )}
               </div>
               <SidePanel />
             </div>
@@ -99,6 +132,7 @@ export default function App() {
             plan={plan}
             prefs={prefs}
             total={total}
+            sessionId={sessionId}
             onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}

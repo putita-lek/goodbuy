@@ -1,0 +1,121 @@
+import axios from 'axios'
+
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
+  timeout: 15000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// Map the ids used in the UI -> the keys the API expects.
+// Adjust the left-hand side if your PreferencesCard uses different ids.
+const PRIORITY_KEYS = {
+  cheapest: 'best_price',
+  closest: 'closest_location',
+}
+const SUSTAINABILITY_KEYS = {
+  local: 'local_business',
+  recyclable: 'recycleable', // API spelling
+  recycleable: 'recycleable',
+  organic: 'organic',
+}
+
+// ['cheapest', 'closest'] -> { best_price: 1, closest_location: 2 }
+function toRanking(ids, keyMap) {
+  return ids
+    .filter((id) => {
+      if (keyMap[id]) return true
+      console.warn(`submitPreference: unknown preference id "${id}" skipped`)
+      return false
+    })
+    .reduce((acc, id, i) => ({ ...acc, [keyMap[id]]: i + 1 }), {})
+}
+
+// { description: 'Vine tomatoes', quantity: '500 g' }
+//   -> { item_name: 'Vine tomatoes in g', item_quantity: 500 }
+// The API wants a numeric quantity, so the unit is folded into the name.
+function toApiItem({ description, quantity }) {
+  const name = description.trim()
+  const match = String(quantity).trim().match(/^(\d+(?:\.\d+)?)\s*(.*)$/)
+
+  if (!match) {
+    // No leading number (e.g. "a few"): keep the text, default to 1
+    const extra = String(quantity).trim()
+    return { item_name: extra ? `${name} (${extra})` : name, item_quantity: 1 }
+  }
+
+  const [, amount, unit] = match
+  return {
+    item_name: unit ? `${name} in ${unit}` : name,
+    item_quantity: parseFloat(amount),
+  }
+}
+
+// Free-text location -> coordinates, using OpenStreetMap Nominatim.
+// Fine for low volume; for production consider Google/Mapbox geocoding, or
+// store lat/lng in `prefs` directly when the user picks a location.
+export async function geocodeLocation(query) {
+  const { data } = await axios.get('https://nominatim.openstreetmap.org/search', {
+    params: { q: query, format: 'jsonv2', limit: 1, countrycodes: 'gb' },
+    timeout: 10000,
+  })
+
+  if (!data.length) {
+    throw new Error(`We couldn't find "${query}". Try a nearby postcode or area name.`)
+  }
+  return { latitude: parseFloat(data[0].lat), longitude: parseFloat(data[0].lon) }
+}
+
+export function buildPayload(prefs, items, userLocation) {
+  const budget = parseFloat(prefs.budget)
+  const distance = parseFloat(prefs.maxDistance)
+
+  if (Number.isNaN(budget) || budget <= 0) throw new Error('Please enter a valid budget.')
+  if (Number.isNaN(distance) || distance <= 0) throw new Error('Please enter a valid maximum distance.')
+
+  return {
+    user_location: userLocation,
+    maximum_distance_from_user_location_miles: distance, // assumes the UI value is in miles
+    preference_priority: toRanking(prefs.priorities, PRIORITY_KEYS),
+    preference_sustainability: toRanking(prefs.values, SUSTAINABILITY_KEYS),
+    budget_gbp: budget,
+    shopping_item_list: items.map(toApiItem),
+  }
+}
+
+// Turn any failure into a message that is safe to show the user.
+function toFriendlyError(err) {
+  if (!axios.isAxiosError(err)) return err.message || 'Something went wrong.'
+
+  if (err.code === 'ECONNABORTED') return 'The request timed out. Please try again.'
+
+  if (err.response) {
+    const { status, data } = err.response
+    // Use the server's message when it sends a string one
+    const serverMessage = [data?.message, data?.detail, data?.error].find(
+      (m) => typeof m === 'string',
+    )
+    if (serverMessage) return serverMessage
+    if (status === 400 || status === 422) return 'Some of your details look invalid. Please check them and try again.'
+    if (status === 429) return 'Too many requests. Please wait a moment and try again.'
+    if (status >= 500) return 'Our server had a problem. Please try again shortly.'
+    return `Request failed (${status}).`
+  }
+
+  // Request was sent but no response came back
+  return 'Unable to reach the server. Check your connection and try again.'
+}
+
+// POST /submit-preference -> resolves with the session id.
+export async function submitPreference(prefs, items) {
+  try {
+    const userLocation = await geocodeLocation(prefs.location)
+    const payload = buildPayload(prefs, items, userLocation)
+
+    const { data } = await api.post('/submit-preference', payload)
+
+    if (data?.session_id == null) throw new Error('Unexpected response from the server.')
+    return data.session_id
+  } catch (err) {
+    throw new Error(toFriendlyError(err))
+  }
+}
