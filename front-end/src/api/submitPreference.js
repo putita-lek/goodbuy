@@ -97,6 +97,7 @@ function toFriendlyError(err) {
     )
     if (serverMessage) return serverMessage
     if (status === 400 || status === 422) return 'Some of your details look invalid. Please check them and try again.'
+    if (status === 404) return "We couldn't find results for this session. Please go back and start again."
     if (status === 429) return 'Too many requests. Please wait a moment and try again.'
     if (status >= 500) return 'Our server had a problem. Please try again shortly.'
     return `Request failed (${status}).`
@@ -104,6 +105,51 @@ function toFriendlyError(err) {
 
   // Request was sent but no response came back
   return 'Unable to reach the server. Check your connection and try again.'
+}
+
+// Normalise one option from the API into the shape the UI uses.
+// Note: the API spells the local flag "is_local_businesss" (three s's); both
+// spellings are accepted so a future fix on the server won't break this.
+function toUiOption(option, resultId, index) {
+  return {
+    key: `${resultId}-${index}`, // option_id repeats within an item, so don't use it as a React key
+    optionId: option.option_id,
+    name: option.option_name,
+    priceGbp: option.price_gbp,
+    location: {
+      name: option.location?.name ?? 'Unknown shop',
+      latitude: option.location?.latitude ?? null,
+      longitude: option.location?.longitude ?? null,
+    },
+    isRecyclable: Boolean(option.is_recycleable),
+    isLocalBusiness: Boolean(option.is_local_businesss ?? option.is_local_business),
+    isOrganic: Boolean(option.is_organic),
+  }
+}
+
+// GET /shopping-item/option-result?session_id=... -> resolves with
+// [{ resultId, itemName, options: [...] }]
+export async function getOptionResult(sessionId) {
+  try {
+    if (sessionId == null) throw new Error('Missing session. Please go back and submit your list again.')
+
+    const { data } = await api.get('/shopping-item/option-result', {
+      params: { session_id: sessionId },
+    })
+
+    if (!Array.isArray(data?.option_result)) throw new Error('Unexpected response from the server.')
+    if (data.option_result.length === 0) {
+      throw new Error('No matching shops found. Try a larger distance or a different list.')
+    }
+
+    return data.option_result.map((r) => ({
+      resultId: r.result_id,
+      itemName: r.item_name,
+      options: (r.options ?? []).map((o, i) => toUiOption(o, r.result_id, i)),
+    }))
+  } catch (err) {
+    throw new Error(toFriendlyError(err))
+  }
 }
 
 // POST /submit-preference -> resolves with the session id.
