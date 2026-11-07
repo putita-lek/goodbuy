@@ -35,4 +35,7 @@ public/basket.jpg            placeholder photo (replace with a full-res image)
 ```
 
 Priority cards are ranked in the order you click them (1 = highest).
-Shop data and prices are mock data in `src/data/shops.js` — swap in a real API later.
+Shop data and prices are loaded from `POST /api/v1/shopping-plans` through
+`src/api/plan.js`. Set `VITE_API_BASE_URL` when the API is hosted on another
+origin. The old mock ranking logic remains in `src/data/shops.js` as reference
+data, but is no longer used to populate the review page.
