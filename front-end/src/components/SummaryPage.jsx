@@ -35,7 +35,7 @@ function listAsText(groups, total) {
   for (const g of groups) {
     lines.push(`${g.shop.name} (${g.shop.distance} mi)`)
     for (const { item, option } of g.lines)
-      lines.push(`  [ ] ${item.description} – ${item.quantity} – ${formatGBP(option.price)}`)
+      lines.push(`  [ ] ${item.description} ×${item.quantity} – ${formatGBP(option.price)}`)
     lines.push(`  Subtotal: ${formatGBP(g.subtotal)}`, '')
   }
   lines.push(`Total: ${formatGBP(total)}`)

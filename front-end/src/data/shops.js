@@ -52,10 +52,12 @@ export function optionsForItem(item, prefs) {
   const stocked = nearby.filter((_, i) => i !== skip)
 
   const base = basePrice(item.description)
+  const quantity = Number(item.quantity) || 1
   const options = stocked.map((shop) => {
     const wobble = 1 + ((hash(item.description + shop.id) % 11) - 5) / 100 // ±5%
-    const price = Math.round(base * shop.priceFactor * wobble * 20) / 20 // nearest 5p
-    return { shop, price }
+    const unitPrice = Math.round(base * shop.priceFactor * wobble * 20) / 20 // nearest 5p
+    const price = Math.round(unitPrice * quantity * 100) / 100 // total for the quantity
+    return { shop, unitPrice, quantity, price }
   })
   if (options.length === 0) return []
 

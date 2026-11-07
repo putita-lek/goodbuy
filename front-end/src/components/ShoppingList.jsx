@@ -6,11 +6,15 @@ export default function ShoppingList({ items, onChange }) {
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('1')
 
+  const qty = quantity.trim() === "" ? NaN : Number(quantity)
+  const qtyValid = Number.isFinite(qty) && qty > 0
+  const canAdd = description.trim() !== '' && qtyValid
+
   const addItem = (e) => {
     e.preventDefault()
-    const desc = description.trim()
-    if (!desc) return
-    onChange([...items, { id: crypto.randomUUID(), description: desc, quantity: quantity.trim() || '1' }])
+    if (!canAdd) return
+    // id is sent to the API as item_id; quantity is stored as a number (item_quantity).
+    onChange([...items, { id: crypto.randomUUID(), description: description.trim(), quantity: qty }])
     setDescription('')
     setQuantity('1')
   }
@@ -76,11 +80,17 @@ export default function ShoppingList({ items, onChange }) {
         </div>
         <div>
           <Label htmlFor="item-quantity">Quantity</Label>
-          <Field id="item-quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+          <Field
+            id="item-quantity"
+            inputMode="decimal"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            aria-invalid={!qtyValid}
+          />
         </div>
         <button
           type="submit"
-          disabled={!description.trim()}
+          disabled={!canAdd}
           className="flex h-14 items-center justify-center gap-3 rounded-lg border border-line bg-white px-6 text-[17px] font-semibold transition hover:border-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Add item <Plus className="size-5" />

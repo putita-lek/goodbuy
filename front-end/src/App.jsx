@@ -18,14 +18,16 @@ const INITIAL_PREFS = {
   budget: '35.00',
 }
 
+// quantity is a number (sent to the API as item_quantity).
+// id is sent as item_id so API results can be matched back to the right item.
 const INITIAL_ITEMS = [
-  ['Vine tomatoes', '500 g'],
-  ['Sourdough bread', '1 loaf'],
-  ['Free-range eggs', '6 eggs'],
-  ['Whole milk', '2 litres'],
-  ['Baby spinach', '200 g'],
-  ['Gala apples', '1 kg'],
-].map(([description, quantity], i) => ({ id: String(i), description, quantity }))
+  ['Vine tomatoes 500g', 1],
+  ['Sourdough bread loaf', 1],
+  ['Free-range eggs (6 pack)', 1],
+  ['Whole milk 1 litre', 2],
+  ['Baby spinach 200g', 1],
+  ['Gala apples 1kg', 1],
+].map(([description, quantity], i) => ({ id: `item-${i + 1}`, description, quantity }))
 
 export default function App() {
   const [step, setStep] = useState(1)

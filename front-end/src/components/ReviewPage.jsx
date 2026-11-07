@@ -61,7 +61,12 @@ function OptionCard({ option, selected, onSelect }) {
             <span className="size-5 rounded-full border-[1.5px] border-muted/50" />
           )}
         </div>
-        <p className="mt-3 text-[28px] font-bold tracking-tight">{formatGBP(option.price)}</p>
+        <p className="mt-3 flex items-baseline gap-2">
+          <span className="text-[28px] font-bold tracking-tight">{formatGBP(option.price)}</span>
+          {option.quantity !== 1 && (
+            <span className="text-[13px] text-muted">{formatGBP(option.unitPrice)} each</span>
+          )}
+        </p>
         <p className="mt-2 flex items-center gap-1.5 text-[13px] text-muted">
           <MapPin className="size-3.5" strokeWidth={1.8} />
           {shop.distance} mi · {driveMinutes(shop.distance)} min drive
@@ -115,8 +120,8 @@ export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNex
               <div>
                 <h2 className="text-lg font-semibold">{item.description}</h2>
                 <p className="text-[13px] text-muted">
-                  {item.quantity}
-                  {options.length > 0 && ` · from ${formatGBP(Math.min(...options.map((o) => o.price)))}`}
+                  Qty {item.quantity}
+                  {options.length > 0 && ` · from ${formatGBP(Math.min(...options.map((o) => o.unitPrice)))} each`}
                 </p>
               </div>
             </div>
