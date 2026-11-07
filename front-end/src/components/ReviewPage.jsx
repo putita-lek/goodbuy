@@ -54,7 +54,9 @@ function OptionCard({ option, selected, onSelect }) {
           <span className="grid size-5 place-items-center rounded-full bg-page text-[10px] font-semibold text-muted">
             {option.letter}
           </span>
-          <span className="flex-1 text-[15px] font-semibold">{shop.name}</span>
+          <span className="flex-1 text-[15px] font-semibold">
+            {option.productName} (at {shop.name})
+          </span>
           {selected ? (
             <CircleCheck className="size-5 text-brand-600" strokeWidth={1.8} />
           ) : (

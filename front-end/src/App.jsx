@@ -8,7 +8,7 @@ import ShoppingList from './components/ShoppingList.jsx'
 import SidePanel from './components/SidePanel.jsx'
 import ReviewPage from './components/ReviewPage.jsx'
 import SummaryPage from './components/SummaryPage.jsx'
-import { optionsForItem } from './data/shops.js'
+import { optionsForItem, apiOptionsForItem } from './data/shops.js'
 import { submitPreference, getOptionResult } from './api/submitPreference.js'
 
 const INITIAL_PREFS = {
@@ -41,26 +41,26 @@ export default function App() {
   const [items, setItems] = useState(INITIAL_ITEMS)
   const [selections, setSelections] = useState({}) // itemId -> shopId the user picked
   const [sessionId, setSessionId] = useState(null) // returned by POST /submit-preference
+  const [optionResult, setOptionResult] = useState(null) // returned by GET /shopping-item/option-result
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
 
-  // Result of GET /shopping-item/option-result (fetched when going to step 3)
-  const [optionResult, setOptionResult] = useState(null)
-  const [isLoadingSummary, setIsLoadingSummary] = useState(false)
-  const [summaryError, setSummaryError] = useState(null)
-
+  // Step 1 -> 2: submit the preferences, then fetch the options for that session.
+  // Both calls must succeed before moving on; any error keeps the user on step 1
+  // with a message, and they can simply click the button again.
   const handleReviewMyList = async () => {
     if (isSubmitting) return
     setIsSubmitting(true)
     setSubmitError(null)
-    setSummaryError(null)
     setOptionResult(null) // a new submission means any earlier results are stale
+    setSelections({}) // ...and so are manual shop picks
 
     try {
       const id = await submitPreference(prefs, items)
+      const result = await getOptionResult(id)
       setSessionId(id)
-      await loadShoppingItemOptionResult(id) // fetch the options immediately after submission
-      setStep(2) // only move on once the API has accepted the preferences
+      setOptionResult(result)
+      setStep(2)
     } catch (err) {
       setSubmitError(err.message)
     } finally {
@@ -68,48 +68,21 @@ export default function App() {
     }
   }
 
-  const loadShoppingItemOptionResult = async (sessionId) => {
-      if (isLoadingSummary) return
-      setIsLoadingSummary(true)
-      setSummaryError(null)
+  // Step 2 -> 3: the data is already loaded, so just move on.
+  const handleSeeSummaryClicked = () => setStep(3)
 
-      try {
-        const result = await getOptionResult(sessionId)
-        setOptionResult(result)
-        setStep(3) // only move on once the options have loaded
-      } catch (err) {
-        setSummaryError(err.message) // stay on step 2 so the user can retry
-      } finally {
-        setIsLoadingSummary(false)
-      }
-  }
-
-  const handleSeeSummaryClicked = async () => {
-    // if (isLoadingSummary) return
-    // setIsLoadingSummary(true)
-    // setSummaryError(null)
-
-    // try {
-    //   const result = await getOptionResult(sessionId)
-    //   setOptionResult(result)
-    //   setStep(3) // only move on once the options have loaded
-    // } catch (err) {
-    //   setSummaryError(err.message) // stay on step 2 so the user can retry
-    // } finally {
-    //   setIsLoadingSummary(false)
-    // }
-  }
-
-  // Options per item, ranked by the current preferences. A manual pick wins
-  // if that shop is still an option; otherwise the best match is chosen.
+  // Options per item, built from the API's option_result and ranked by the
+  // current preferences. A manual pick wins if that shop is still an option;
+  // otherwise the best match is chosen.
   const plan = useMemo(
     () =>
       items.map((item) => {
-        const options = optionsForItem(item, prefs)
+        const apiOptions = apiOptionsForItem(optionResult, items, item)
+        const options = optionsForItem(item, prefs, apiOptions)
         const chosen = options.find((o) => o.shop.id === selections[item.id]) ?? options[0] ?? null
         return { item, options, chosen }
       }),
-    [items, prefs, selections],
+    [items, prefs, selections, optionResult],
   )
   const total = plan.reduce((sum, p) => sum + (p.chosen?.price ?? 0), 0)
 
@@ -150,7 +123,7 @@ export default function App() {
                   >
                     {isSubmitting ? (
                       <>
-                        Sending… <Loader2 className="size-5 animate-spin" />
+                        Finding your options… <Loader2 className="size-5 animate-spin" />
                       </>
                     ) : (
                       <>
@@ -168,32 +141,19 @@ export default function App() {
         )}
 
         {step === 2 && (
-          <div className="flex flex-col gap-6">
-            <ReviewPage
-              plan={plan}
-              prefs={prefs}
-              total={total}
-              sessionId={sessionId}
-              isNextLoading={isLoadingSummary}
-              onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
-              onBack={() => {
-                setSummaryError(null)
-                setStep(1)
-              }}
-              onNext={handleSeeSummaryClicked}
-            />
-            <ErrorBanner message={summaryError} />
-          </div>
-        )}
-
-        {step === 3 && (
-          <SummaryPage
+          <ReviewPage
             plan={plan}
             prefs={prefs}
             total={total}
-            optionResult={optionResult}
-            onBack={() => setStep(2)}
+            sessionId={sessionId}
+            onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
+            onBack={() => setStep(1)}
+            onNext={handleSeeSummaryClicked}
           />
+        )}
+
+        {step === 3 && (
+          <SummaryPage plan={plan} prefs={prefs} total={total} onBack={() => setStep(2)} />
         )}
       </main>
 
