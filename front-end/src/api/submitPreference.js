@@ -14,7 +14,8 @@ const PRIORITY_KEYS = {
 }
 const SUSTAINABILITY_KEYS = {
   local: 'local_business',
-  recyclable: 'recycleable', // API spelling
+  recycle: 'recycleable', // UI id (PreferencesCard) -> API spelling
+  recyclable: 'recycleable',
   recycleable: 'recycleable',
   organic: 'organic',
 }
