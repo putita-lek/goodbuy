@@ -22,6 +22,13 @@ type Product struct {
 	Store        Store
 	IsRecyclable bool `gorm:"not null;default:false"`
 	IsOrganic    bool `gorm:"not null;default:false"`
+
+	// Optional fields filled by the Kaggle import (cmd/import-kaggle).
+	UnitPriceGBP *float64   // price per Unit, nil when unknown
+	Unit         string     `gorm:"size:16"` // e.g. kg, unit
+	IsOwnBrand   bool       `gorm:"not null;default:false"`
+	PriceDate    *time.Time // day the price was recorded, nil for hand-entered data
+	Source       string     `gorm:"size:32;index"` // "" for seed data, "kaggle" for imported rows
 }
 
 // ShoppingSession holds one submitted preference and its suggested options.

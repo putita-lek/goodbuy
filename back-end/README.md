@@ -34,6 +34,88 @@ Run unit tests: `go test ./...`. Example calls are in `requests.http`.
 | `SEED_DATA` | `true` | Load the sample catalogue when the `stores` table is empty |
 | `CORS_ORIGINS` | `*` | Allowed browser origins for the website |
 
+## Importing real supermarket prices (Kaggle)
+
+The sample catalogue only has a few hand-written products. `cmd/import-kaggle` loads real prices from the Kaggle dataset [Time Series UK Supermarket Data](https://www.kaggle.com/datasets/declanmcalinden/time-series-uk-supermarket-data) (Aldi, ASDA, Morrisons, Sainsbury's and Tesco).
+
+> **The prices are from 2024, not today.** The dataset has daily snapshots from 9 Jan to 13 Apr 2024 and is not updated. Each imported product stores its `price_date`, so the app can show how old a price is. Lidl, M&S and other chains are not in the dataset and keep their seed data.
+
+### 1. Get the files
+
+Download the dataset from Kaggle and unzip it into `goodbuy/kaggle/`, next to `back-end/`:
+
+```
+goodbuy/
+  back-end/
+  kaggle/
+    All_Data_Aldi.csv  All_Data_ASDA.csv  All_Data_Morrisons.csv  All_Data_Sains.csv  All_Data_Tesco.csv
+```
+
+The files are about 800 MB in total, so keep `kaggle/` out of git.
+
+With the Kaggle CLI (needs an API token in `~/.kaggle/kaggle.json`), from the `goodbuy` folder:
+
+```bash
+kaggle datasets download -d declanmcalinden/time-series-uk-supermarket-data -p kaggle --unzip
+```
+
+### 2. Run the import
+
+Start the database and API first, so the tables exist and the sample stores are seeded (`docker compose up --build`). Then, from `back-end/`:
+
+```bash
+go run ./cmd/import-kaggle -dir ../kaggle -convenience-markup 8
+```
+
+The command reads the same `DB_*` variables as the server, and their defaults match `docker-compose.yml`, which publishes MySQL on `localhost:3306`. A full import takes 1–2 minutes and adds about 80,000 products.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-dir` | `../kaggle` | Folder with the `All_Data_*.csv` files |
+| `-date` | latest day in each file | Snapshot day to import, as `YYYYMMDD` (e.g. `20240301`) |
+| `-convenience-markup` | `0` | Percent added to prices for stores with "Local", "Express" or "Metro" in their name |
+| `-batch` | `1000` | Rows per `INSERT` |
+| `-dry-run` | `false` | Read the files and print how many products each has, without touching the database |
+
+You can run it again at any time. Each run deletes the products it imported before (`source = 'kaggle'`) for the stores it updates, then inserts the new snapshot. Seed products and other stores are never changed, and saved shopping sessions keep their own snapshot of each option.
+
+### How the data is mapped
+
+The dataset has one price per **chain**, but GoodBuy has prices per **store**. So each chain's prices are copied to every store in the `stores` table whose name starts with that chain's name:
+
+| CSV file | Applied to stores named… | Seed stores that match |
+|---|---|---|
+| `All_Data_Sains.csv` | `Sainsbury's…` | Sainsbury's Cameron Toll, Sainsbury's Local Princes Street |
+| `All_Data_Tesco.csv` | `Tesco…` | Tesco Express Morningside |
+| `All_Data_Aldi.csv` | `Aldi…` | none |
+| `All_Data_ASDA.csv` | `ASDA…` | none |
+| `All_Data_Morrisons.csv` | `Morrisons…` | none |
+
+A chain with no matching store is skipped with a message. To use it, add a store first (for example `Aldi Leith Walk`, with its real latitude and longitude) and run the import again.
+
+The prices are the chains' main online prices. Convenience stores (Sainsbury's Local, Tesco Express) often charge more, which `-convenience-markup` roughly allows for.
+
+Each CSV row becomes a product like this:
+
+| CSV column | `products` column | Notes |
+|---|---|---|
+| `names` | `name` | Extra spaces removed; cut to 255 characters |
+| `prices_(£)` | `price_gbp` | Plus the markup for convenience stores |
+| `prices_unit_(£)` | `unit_price_gbp` | `NULL` when the file has `0` (Tesco often does) |
+| `unit` | `unit` | e.g. `kg`, `l`, `unit` |
+| `category` | `keywords` | e.g. `fresh_food` becomes "fresh food", so the matcher can find it |
+| `own_brand` | `is_own_brand` | |
+| `date` | `price_date` | |
+| none | `is_organic` | True when the name contains "organic" |
+| none | `is_recyclable` | Always false, because the dataset doesn't record packaging |
+| none | `source` | Always `kaggle`; seed products have an empty `source` |
+
+Only one day is imported. Each file has a row for every product on every day, so the import keeps the rows for the chosen day (by default the latest) and ignores the rest. When a product is listed more than once that day under different categories, it keeps one row and adds every category to `keywords`.
+
+### Known limitation: search speed
+
+Product search (`ProductRepository.FindByAnyToken`) uses `LIKE '%word%'` across every product and loads all matches. With the full import, a four-item shopping list takes about 1 second to submit. A MySQL `FULLTEXT` index on `name` and `keywords`, or a limit on matches per item, would speed this up.
+
 ## API
 
 | Method | Path | Purpose |
@@ -67,13 +149,14 @@ Suggestions are saved with the session as a snapshot, so later price changes don
 ## Data model
 
 - `stores`: name, latitude, longitude, is_local_business
-- `products`: name, keywords, price_gbp, store_id, is_recyclable, is_organic
+- `products`: name, keywords, price_gbp, store_id, is_recyclable, is_organic, plus unit_price_gbp, unit, is_own_brand, price_date and source (filled by the Kaggle import)
 - `shopping_sessions`, `session_items`, `session_item_options`: one shopping flow and its suggestions. These are not user profiles and hold no personal details besides the submitted location.
 
 ## Layout
 
 ```
 cmd/server         entry point
+cmd/import-kaggle  one-off import of the Kaggle supermarket prices
 internal/config    environment config
 internal/database  connection and migrations
 internal/models    GORM models
