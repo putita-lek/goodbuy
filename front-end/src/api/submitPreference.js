@@ -34,7 +34,7 @@ function toRanking(ids, keyMap) {
 // { description: 'Vine tomatoes', quantity: '500 g' }
 //   -> { item_name: 'Vine tomatoes in g', item_quantity: 500 }
 // The API wants a numeric quantity, so the unit is folded into the name.
-function toApiItem({ description, quantity }) {
+export function toApiItem({ description, quantity }) {
   const name = description.trim()
   const match = String(quantity).trim().match(/^(\d+(?:\.\d+)?)\s*(.*)$/)
 
