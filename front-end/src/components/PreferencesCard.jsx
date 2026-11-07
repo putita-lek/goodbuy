@@ -1,5 +1,7 @@
-import { Leaf, MapPin, Recycle, Store, Wallet } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Leaf, LocateFixed, MapPin, Recycle, Store, Wallet } from 'lucide-react'
 import { Card, Field, Label, OptionCard, SectionTitle } from './ui.jsx'
+import { geocodeUK } from '../geocode.js'
 
 const PRIORITIES = [
   { id: 'cheapest', icon: Wallet, title: 'Cheapest', description: 'Lower total basket cost' },
@@ -19,10 +21,54 @@ export function toggleRanked(list, id) {
 
 const rankOf = (list, id) => (list.includes(id) ? list.indexOf(id) + 1 : null)
 
+const CURRENT_LOCATION = 'Current location'
+
 export default function PreferencesCard({ prefs, onChange }) {
+  // idle | loading (GPS) | denied | searching (postcodes.io) | found | notfound | error
+  const [geoStatus, setGeoStatus] = useState('idle')
+  const hasCoords = prefs.latitude != null && prefs.longitude != null
+
+  // Typed location -> lat/long via postcodes.io, 600 ms after the user stops typing.
+  useEffect(() => {
+    const text = prefs.location.trim()
+    if (!text || text === CURRENT_LOCATION || hasCoords) return
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      setGeoStatus('searching')
+      try {
+        const hit = await geocodeUK(text, controller.signal)
+        if (!hit) return setGeoStatus('notfound')
+        set({ latitude: hit.latitude, longitude: hit.longitude })
+        setGeoStatus('found')
+      } catch (e) {
+        if (e.name !== 'AbortError') setGeoStatus('error')
+      }
+    }, 600)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.location])
+
   // Functional update so rapid clicks never work from stale state.
   const set = (patch) =>
     onChange((p) => ({ ...p, ...(typeof patch === 'function' ? patch(p) : patch) }))
+
+  // Browser geolocation: asks the user for permission, then stores lat/long
+  // (sent to the backend as user_location). The text field just shows a label.
+  const useMyLocation = () => {
+    if (!navigator.geolocation) return setGeoStatus('denied')
+    setGeoStatus('loading')
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        set({ location: CURRENT_LOCATION, latitude: coords.latitude, longitude: coords.longitude })
+        setGeoStatus('idle')
+      },
+      () => setGeoStatus('denied'),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
+    )
+  }
 
   return (
     <Card className="p-7">
@@ -76,9 +122,33 @@ export default function PreferencesCard({ prefs, onChange }) {
             id="location"
             leading={<MapPin className="size-5" strokeWidth={1.6} />}
             value={prefs.location}
-            onChange={(e) => set({ location: e.target.value })}
+            // Typing a new place clears coordinates from an earlier "current location".
+            onChange={(e) => {
+              set({ location: e.target.value, latitude: null, longitude: null })
+              setGeoStatus('idle')
+            }}
             placeholder="Town or postcode"
           />
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <button
+              type="button"
+              onClick={useMyLocation}
+              disabled={geoStatus === 'loading'}
+              className="flex items-center gap-1.5 font-semibold text-brand-600 hover:underline disabled:opacity-60"
+            >
+              <LocateFixed className="size-4" strokeWidth={1.8} />
+              {geoStatus === 'loading' ? 'Finding your location…' : 'Use my current location'}
+            </button>
+            {geoStatus === 'denied' ? (
+              <span className="text-red-700">Location access was blocked. Allow it in your browser settings.</span>
+            ) : geoStatus === 'searching' ? (
+              <span className="text-muted">Looking up “{prefs.location.trim()}”…</span>
+            ) : geoStatus === 'notfound' ? (
+              <span className="text-red-700">Couldn’t find that place. Try a UK postcode like EH1 1YZ.</span>
+            ) : geoStatus === 'error' ? (
+              <span className="text-red-700">Location lookup is unavailable right now. Use your current location.</span>
+            ) : null}
+          </div>
         </div>
         <div>
           <Label htmlFor="distance">Maximum distance</Label>

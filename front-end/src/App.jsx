@@ -13,7 +13,9 @@ import { optionsForItem } from './data/shops.js'
 const INITIAL_PREFS = {
   priorities: ['cheapest', 'closest'], // order = rank
   values: ['local', 'organic'], // order = rank
-  location: 'Stoke Newington, London N16',
+  location: '', // free text the user types (or "Current location")
+  latitude: null, // set by "Use my current location"; sent to the API as user_location
+  longitude: null,
   maxDistance: '2',
   budget: '35.00',
 }

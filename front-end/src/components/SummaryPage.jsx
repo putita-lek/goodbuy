@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Download, Share2 } from 'lucide-react'
 import PageIntro from './PageIntro.jsx'
 import ItemIcon from './ItemIcon.jsx'
 import { Card } from './ui.jsx'
+import RouteMap from './RouteMap.jsx'
 import { Tag } from './ReviewPage.jsx'
 import { VALUE_LABEL, VALUE_TAG, formatGBP } from '../data/shops.js'
 
@@ -114,14 +115,33 @@ function ShopCard({ group, isMain }) {
   )
 }
 
-// Simple schematic map: pins spread across a grid, in visiting order.
-function RoutePreview({ groups }) {
-  const spots = [
-    [18, 28],
-    [48, 70],
-    [74, 36],
-    [32, 82],
-  ]
+const EDINBURGH = { latitude: 55.9533, longitude: -3.1883 }
+
+// Point `miles` away from `origin` in direction `bearing` (degrees).
+// Only used for mock shops, which have a distance but no coordinates.
+function offsetFrom(origin, miles, bearing) {
+  const rad = (bearing * Math.PI) / 180
+  const dLat = (miles / 69) * Math.cos(rad)
+  const dLng = (miles / (69 * Math.cos((origin.latitude * Math.PI) / 180))) * Math.sin(rad)
+  return { latitude: origin.latitude + dLat, longitude: origin.longitude + dLng }
+}
+
+// Real map of the trip: You -> shop 1 -> shop 2 …
+// Shops from the backend carry latitude/longitude; mock shops are placed at their
+// distance from the user so the map still makes sense before the API is connected.
+function RoutePreview({ groups, prefs }) {
+  const user =
+    prefs.latitude != null && prefs.longitude != null
+      ? { latitude: Number(prefs.latitude), longitude: Number(prefs.longitude) }
+      : null
+  const origin = user ?? EDINBURGH
+  const stops = groups.map((g, i) => ({
+    name: g.shop.name,
+    ...(g.shop.latitude != null
+      ? { latitude: g.shop.latitude, longitude: g.shop.longitude }
+      : offsetFrom(origin, g.shop.distance, 40 + i * 110)),
+  }))
+
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between">
@@ -130,29 +150,12 @@ function RoutePreview({ groups }) {
           {groups.length} {groups.length === 1 ? 'stop' : 'stops'}
         </span>
       </div>
-      <div className="relative mt-5 h-48 overflow-hidden rounded-xl bg-[#ebece7]">
-        {[25, 50, 75].map((x) => (
-          <span key={`v${x}`} className="absolute inset-y-0 w-px bg-white/80" style={{ left: `${x}%` }} />
-        ))}
-        {[33, 66].map((y) => (
-          <span key={`h${y}`} className="absolute inset-x-0 h-px bg-white/80" style={{ top: `${y}%` }} />
-        ))}
-        {groups.map((g, i) => {
-          const [x, y] = spots[i % spots.length]
-          return (
-            <div
-              key={g.shop.id}
-              className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1.5"
-              style={{ left: `${x}%`, top: `${y}%` }}
-            >
-              <span className="rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold whitespace-nowrap text-white shadow">
-                {i + 1}. {g.shop.name}
-              </span>
-              <span className="size-2.5 rounded-full bg-brand-600 ring-4 ring-white/70" />
-            </div>
-          )
-        })}
-      </div>
+      <RouteMap user={user} stops={stops} className="mt-5 h-72" />
+      {!user && (
+        <p className="mt-3 text-[13px] text-muted">
+          Add your location on step 1 to see the route from where you are.
+        </p>
+      )}
     </Card>
   )
 }
@@ -276,7 +279,7 @@ export default function SummaryPage({ plan, prefs, total, onBack }) {
       </div>
 
       <div className="mt-6">
-        <RoutePreview groups={groups} />
+        <RoutePreview groups={groups} prefs={prefs} />
       </div>
 
       <p className="mt-4 text-[13px] text-muted">
