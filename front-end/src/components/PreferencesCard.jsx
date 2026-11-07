@@ -89,7 +89,7 @@ export default function PreferencesCard({ prefs, onChange }) {
       <div className="mt-7 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-[15px] font-semibold">What matters to you?</h3>
         <span className="text-sm text-muted">
-          1 is highest priority · {prefs.values.length} selected
+          1 is highest priority · {prefs.values.length} 
         </span>
       </div>
       <div className="mt-3 grid gap-4 sm:grid-cols-3">
@@ -127,7 +127,7 @@ export default function PreferencesCard({ prefs, onChange }) {
               set({ location: e.target.value, latitude: null, longitude: null })
               setGeoStatus('idle')
             }}
-            placeholder="Town or postcode"
+            placeholder="Postcode"
           />
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <button
