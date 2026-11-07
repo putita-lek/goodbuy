@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #f0f5f1;
+  --color-brand-100: #e3ece5;
+  --color-brand-500: #3d7a55;
+  --color-brand-600: #2e6b45;
+  --color-brand-700: #245a39;
+
+  --color-ink: #1f2a24;
+  --color-muted: #6b7570;
+  --color-line: #e4e7e3;
+  --color-page: #f7f7f5;
+  --color-sand: #f1ece0;
+}
+
+body {
+  @apply bg-page text-ink font-sans antialiased;
+  overflow-x: clip; /* full-bleed bars use 100vw */
+}

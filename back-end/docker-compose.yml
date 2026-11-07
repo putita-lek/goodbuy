@@ -1,0 +1,37 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-goodbuy}
+      MYSQL_USER: ${DB_USER:-goodbuy}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-goodbuy}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: .
+    environment:
+      PORT: 8080
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: ${DB_USER:-goodbuy}
+      DB_PASSWORD: ${DB_PASSWORD:-goodbuy}
+      DB_NAME: ${DB_NAME:-goodbuy}
+      SEED_DATA: "true"
+      CORS_ORIGINS: "*"
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:

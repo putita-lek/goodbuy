@@ -1,0 +1,35 @@
+### Submit preference (returns session_id)
+POST http://localhost:8080/submit-preference
+Content-Type: application/json
+
+{
+  "user_location": { "latitude": 55.9533, "longitude": -3.1883 },
+  "maximum_distance_from_user_location_miles": 5.0,
+  "preference_priority": { "best_price": 1, "closest_location": 2 },
+  "preference_sustainability": { "local_business": 1, "recycleable": 2, "organic": 3 },
+  "budget_gbp": 25.0,
+  "shopping_item_list": [
+    { "item_name": "diet coke small size", "item_quantity": 2 },
+    { "item_name": "rice flour pack", "item_quantity": 2 },
+    { "item_name": "a carton of milk", "item_quantity": 2 },
+    { "item_name": "jasmine rice in kg", "item_quantity": 2.5 }
+  ]
+}
+
+### Get options (replace session_id)
+GET http://localhost:8080/shopping-item/option-result?session_id=528941
+
+### Submit chosen options
+POST http://localhost:8080/shopping-item/submit-option
+Content-Type: application/json
+
+{
+  "session_id": 528941,
+  "submitted_option": [
+    { "result_id": 1, "selected_option_id": 2 },
+    { "result_id": 2, "selected_option_id": 1 }
+  ]
+}
+
+### Summary
+GET http://localhost:8080/shopping-item/summary?session_id=528941
