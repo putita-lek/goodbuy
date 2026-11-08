@@ -121,6 +121,7 @@ function toUiOption(option, resultId, index) {
       latitude: option.location?.latitude ?? null,
       longitude: option.location?.longitude ?? null,
     },
+    distanceMiles: Number.isFinite(option.distance_miles) ? option.distance_miles : null,
     isRecyclable: Boolean(option.is_recycleable),
     isLocalBusiness: Boolean(option.is_local_businesss ?? option.is_local_business),
     isOrganic: Boolean(option.is_organic),
@@ -128,7 +129,7 @@ function toUiOption(option, resultId, index) {
 }
 
 // GET /shopping-item/option-result?session_id=... -> resolves with
-// [{ resultId, itemName, options: [...] }]
+// [{ resultId, itemName, itemQuantity, options: [...] }]
 export async function getOptionResult(sessionId) {
   try {
     if (sessionId == null) throw new Error('Missing session. Please go back and submit your list again.')
@@ -145,6 +146,7 @@ export async function getOptionResult(sessionId) {
     return data.option_result.map((r) => ({
       resultId: r.result_id,
       itemName: r.item_name,
+      itemQuantity: r.item_quantity,
       options: (r.options ?? []).map((o, i) => toUiOption(o, r.result_id, i)),
     }))
   } catch (err) {
@@ -152,19 +154,44 @@ export async function getOptionResult(sessionId) {
   }
 }
 
-// POST /submit-preference -> resolves with the session id.
+// POST /submit-preference -> resolves with { sessionId, userLocation }.
+// userLocation is the point the search used (typed place, geocoded, or GPS), so
+// the review and summary pages can show distances and the route from it.
 export async function submitPreference(prefs, items) {
   try {
+    if (!items.length) throw new Error('Add at least one item to your list.')
 
-    const userLocation = prefs.latitude != null && prefs.longitude != null
-    ? { latitude: Number(prefs.latitude), longitude: Number(prefs.longitude) }
-    : await geocodeLocation(prefs.location)
+    let userLocation
+    if (prefs.latitude != null && prefs.longitude != null) {
+      userLocation = { latitude: Number(prefs.latitude), longitude: Number(prefs.longitude) }
+    } else if (prefs.location.trim()) {
+      userLocation = await geocodeLocation(prefs.location.trim())
+    } else {
+      throw new Error('Please enter your location, or use your current location.')
+    }
     const payload = buildPayload(prefs, items, userLocation)
 
     const { data } = await api.post('/submit-preference', payload)
 
     if (data?.session_id == null) throw new Error('Unexpected response from the server.')
-    return data.session_id
+    return { sessionId: data.session_id, userLocation }
+  } catch (err) {
+    throw new Error(toFriendlyError(err))
+  }
+}
+
+// POST /shopping-item/submit-option: saves the option chosen for each item.
+// choices: [{ resultId, optionId }]
+export async function submitOption(sessionId, choices) {
+  try {
+    if (sessionId == null) throw new Error('Missing session. Please go back and submit your list again.')
+    if (!choices.length) throw new Error('Choose at least one option first.')
+
+    const { data } = await api.post('/shopping-item/submit-option', {
+      session_id: sessionId,
+      submitted_option: choices.map((c) => ({ result_id: c.resultId, selected_option_id: c.optionId })),
+    })
+    if (!data?.is_success) throw new Error(data?.error || 'Could not save your choices.')
   } catch (err) {
     throw new Error(toFriendlyError(err))
   }

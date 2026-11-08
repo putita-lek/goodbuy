@@ -9,6 +9,10 @@ import 'leaflet/dist/leaflet.css'
 //   stops: [{ name, latitude, longitude }]  -> numbered green pins, in visiting order
 // Draws a dashed route You -> 1 -> 2 -> … and zooms to fit everything.
 
+// Store names come from the database, so escape them before putting them in HTML.
+const escapeHtml = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
 const pinIcon = (label, n) =>
   L.divIcon({
     className: '',
@@ -16,7 +20,7 @@ const pinIcon = (label, n) =>
     iconAnchor: [14, 14],
     html: `<div style="display:flex;align-items:center;gap:6px;transform:translateY(-2px)">
       <span style="display:grid;place-items:center;width:28px;height:28px;border-radius:999px;background:#2e6b45;color:#fff;font:600 13px Inter,sans-serif;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)">${n}</span>
-      <span style="background:#fff;border-radius:6px;padding:2px 8px;font:600 12px Inter,sans-serif;color:#1f2a24;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2)">${label}</span>
+      <span style="background:#fff;border-radius:6px;padding:2px 8px;font:600 12px Inter,sans-serif;color:#1f2a24;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.2)">${escapeHtml(label)}</span>
     </div>`,
   })
 

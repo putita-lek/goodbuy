@@ -5,7 +5,7 @@ import ItemIcon from './ItemIcon.jsx'
 import { Card } from './ui.jsx'
 import RouteMap from './RouteMap.jsx'
 import { Tag } from './ReviewPage.jsx'
-import { VALUE_LABEL, VALUE_TAG, formatGBP } from '../data/shops.js'
+import { VALUE_LABEL, VALUE_TAG, formatGBP, formatMiles } from '../data/shops.js'
 
 // Group the chosen options by shop; the shop covering most items comes first.
 function groupByShop(plan) {
@@ -14,12 +14,11 @@ function groupByShop(plan) {
     if (!chosen) continue
     const g = groups.get(chosen.shop.id) ?? { shop: chosen.shop, lines: [], subtotal: 0 }
     g.lines.push({ item, option: chosen })
-    g.subtotal += chosen.price
+    g.subtotal = Math.round((g.subtotal + chosen.price) * 100) / 100
     groups.set(chosen.shop.id, g)
   }
-  return [...groups.values()].sort(
-    (a, b) => b.lines.length - a.lines.length || a.shop.distance - b.shop.distance,
-  )
+  const dist = (g) => (Number.isFinite(g.shop.distance) ? g.shop.distance : Infinity)
+  return [...groups.values()].sort((a, b) => b.lines.length - a.lines.length || dist(a) - dist(b))
 }
 
 // 0–5: share of chosen options that carry the tags the user cares about.
@@ -34,7 +33,7 @@ function sustainabilityScore(plan, prefs) {
 function listAsText(groups, total) {
   const lines = ['GoodBuy – shopping plan', '']
   for (const g of groups) {
-    lines.push(`${g.shop.name} (${g.shop.distance} mi)`)
+    lines.push(`${g.shop.name} (${formatMiles(g.shop.distance)})`)
     for (const { item, option } of g.lines)
       lines.push(`  [ ] ${item.description} ×${item.quantity} – ${formatGBP(option.price)}`)
     lines.push(`  Subtotal: ${formatGBP(g.subtotal)}`, '')
@@ -61,7 +60,7 @@ function ShopCard({ group, isMain }) {
     <Card className="flex flex-col p-6">
       <div className="flex items-start justify-between gap-3">
         <h2 className="text-xl font-semibold tracking-tight">
-          You go to {group.shop.name} ({group.shop.distance} mi) for:
+          You go to {group.shop.name} ({formatMiles(group.shop.distance)}) for:
         </h2>
         {isMain && (
           <span className="shrink-0 rounded-full bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white">
@@ -115,32 +114,16 @@ function ShopCard({ group, isMain }) {
   )
 }
 
-const EDINBURGH = { latitude: 55.9533, longitude: -3.1883 }
-
-// Point `miles` away from `origin` in direction `bearing` (degrees).
-// Only used for mock shops, which have a distance but no coordinates.
-function offsetFrom(origin, miles, bearing) {
-  const rad = (bearing * Math.PI) / 180
-  const dLat = (miles / 69) * Math.cos(rad)
-  const dLng = (miles / (69 * Math.cos((origin.latitude * Math.PI) / 180))) * Math.sin(rad)
-  return { latitude: origin.latitude + dLat, longitude: origin.longitude + dLng }
-}
-
-// Real map of the trip: You -> shop 1 -> shop 2 …
-// Shops from the backend carry latitude/longitude; mock shops are placed at their
-// distance from the user so the map still makes sense before the API is connected.
-function RoutePreview({ groups, prefs }) {
+// Real map of the trip: You -> shop 1 -> shop 2 …, using the coordinates the
+// API sent for each store. Stores without coordinates are left off the map.
+function RoutePreview({ groups, userLocation }) {
   const user =
-    prefs.latitude != null && prefs.longitude != null
-      ? { latitude: Number(prefs.latitude), longitude: Number(prefs.longitude) }
+    Number.isFinite(userLocation?.latitude) && Number.isFinite(userLocation?.longitude)
+      ? { latitude: userLocation.latitude, longitude: userLocation.longitude }
       : null
-  const origin = user ?? EDINBURGH
-  const stops = groups.map((g, i) => ({
-    name: g.shop.name,
-    ...(g.shop.latitude != null
-      ? { latitude: g.shop.latitude, longitude: g.shop.longitude }
-      : offsetFrom(origin, g.shop.distance, 40 + i * 110)),
-  }))
+  const stops = groups
+    .filter((g) => Number.isFinite(g.shop.latitude) && Number.isFinite(g.shop.longitude))
+    .map((g) => ({ name: g.shop.name, latitude: g.shop.latitude, longitude: g.shop.longitude }))
 
   return (
     <Card className="p-6">
@@ -160,7 +143,7 @@ function RoutePreview({ groups, prefs }) {
   )
 }
 
-export default function SummaryPage({ plan, prefs, total, onBack }) {
+export default function SummaryPage({ plan, prefs, userLocation, total, onBack }) {
   const [copied, setCopied] = useState(false)
   const groups = groupByShop(plan)
   const budget = parseFloat(prefs.budget) || 0
@@ -176,7 +159,8 @@ export default function SummaryPage({ plan, prefs, total, onBack }) {
       download: 'goodbuy-list.txt',
     })
     a.click()
-    URL.revokeObjectURL(a.href)
+    // Revoking straight away can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
   }
 
   const share = async () => {
@@ -204,14 +188,16 @@ export default function SummaryPage({ plan, prefs, total, onBack }) {
     )
 
   const stops = groups.length === 1 ? 'One stop' : `${groups.length} stops`
-  const budgetNote = remaining >= 0 ? 'and plenty of room in your budget' : 'but a little over your budget'
+  const budgetNote = remaining >= 0 ? 'within your budget' : 'but a little over your budget'
+  const missing = plan.length - itemCount
+  const coverage = missing === 0 ? 'everything on your list' : `${itemCount} of ${plan.length} items`
 
   return (
     <>
       <PageIntro
         eyebrow="Step 3 of 3 · Ready to shop"
         title="Your shopping plan"
-        subtitle={`${stops}, everything on your list, ${budgetNote}.`}
+        subtitle={`${stops}, ${coverage}, ${budgetNote}.`}
       />
 
       <div className="mt-10 grid gap-5 md:grid-cols-3">
@@ -279,11 +265,11 @@ export default function SummaryPage({ plan, prefs, total, onBack }) {
       </div>
 
       <div className="mt-6">
-        <RoutePreview groups={groups} prefs={prefs} />
+        <RoutePreview groups={groups} userLocation={userLocation} />
       </div>
 
       <p className="mt-4 text-[13px] text-muted">
-        {itemCount} items · prices are estimates — check availability in store before you travel.
+        {itemCount} {itemCount === 1 ? 'item' : 'items'} · prices are estimates — check availability in store before you travel.
       </p>
     </>
   )

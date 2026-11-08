@@ -20,8 +20,11 @@ const (
 
 	relevanceWeight     = 1.0 // how closely the product name matches the item text
 	priorityGroupWeight = 1.0 // best price / closest location
-	// Sustainability is secondary to the priorities: its maximum (0.4) stays below
-	// the top priority's full weight, so it breaks ties rather than overriding them.
+	// Sustainability counts as much as the priorities. The three sustainability ranks
+	// add up to at most 2.0 (1 + 2/3 + 1/3), which is more than the top priority's
+	// full weight (1.0), so a product that meets the user's sustainability choices
+	// can rank above a cheaper or closer one. Below 0.5 the bonus could only break
+	// ties; TestRankCandidates_SustainabilityCanOutrankPrice checks the current behaviour.
 	sustainabilityWeight = 1.0 // local business / recyclable / organic
 )
 

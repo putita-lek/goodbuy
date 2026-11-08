@@ -1,36 +1,31 @@
-// Shop options and the ranking logic used by pages 2 and 3.
-// Shops and prices now come from GET /shopping-item/option-result (see
-// getOptionResult in api/submitPreference.js); this file only adapts that data
-// to the UI and scores it against the user's preferences.
-
-import { toApiItem } from '../api/submitPreference.js'
+// Adapts the options from GET /shopping-item/option-result (see getOptionResult
+// in api/submitPreference.js) to the shape pages 2 and 3 use.
+//
+// The API is the source of truth for prices, shops, distances and ranking: it
+// already scores every option against the user's preferences (and how well the
+// product matches the item), so the order it sends is kept here.
 
 // Which shop tag satisfies which "What matters to you?" value.
-export const VALUE_TAG = { local: 'Local', organic: 'Organic', recycle: 'Recycled bags' }
+export const VALUE_TAG = { local: 'Local', organic: 'Organic', recycle: 'Recyclable' }
 export const VALUE_LABEL = { local: 'Local', organic: 'Organic', recycle: 'Recycle' }
 export const PRIORITY_LABEL = { cheapest: 'Cheapest', closest: 'Closest' }
 
 export const driveMinutes = (miles) =>
   Number.isFinite(miles) ? Math.max(2, Math.round(miles * 5 + 1)) : null
 
-const norm = (s) => String(s ?? '').trim().toLowerCase()
+// "1.3 mi" or "— mi" when the distance is unknown.
+export const formatMiles = (miles) =>
+  Number.isFinite(miles) ? `${Math.round(miles * 10) / 10} mi` : '— mi'
 
 /**
- * Find the API result for a list item and return its options.
- * Matches on the item name we sent to the API; if the API renamed the items,
- * falls back to list position when both lists have the same length.
+ * The API result for the list item at `index`. Results are numbered
+ * result_id = 1, 2, 3… in the order the items were submitted, so the position
+ * is used rather than the name (two items can share a name).
  */
-export function apiOptionsForItem(optionResult, items, item) {
+export function apiOptionsForItem(optionResult, index) {
   if (!optionResult?.length) return []
-
-  const wanted = norm(toApiItem(item).item_name)
-  const byName = optionResult.find((r) => norm(r.itemName) === wanted)
-  if (byName) return byName.options
-
-  if (optionResult.length === items.length) {
-    return optionResult[items.indexOf(item)]?.options ?? []
-  }
-  return []
+  const result = optionResult.find((r) => r.resultId === index + 1) ?? optionResult[index]
+  return result?.options ?? []
 }
 
 // Straight-line distance in miles between two { latitude, longitude } points.
@@ -51,78 +46,62 @@ export function haversineMiles(from, to) {
   return Math.round(miles * 10) / 10
 }
 
-// The API's boolean flags -> the tags the scoring and UI already use.
+// The API's boolean flags -> the tags the UI shows.
 function tagsFor(o) {
   const tags = []
-  if (o.isLocalBusiness) tags.push('Local')
-  if (o.isOrganic) tags.push('Organic')
-  if (o.isRecyclable) tags.push('Recycled bags')
+  if (o.isLocalBusiness) tags.push(VALUE_TAG.local)
+  if (o.isOrganic) tags.push(VALUE_TAG.organic)
+  if (o.isRecyclable) tags.push(VALUE_TAG.recycle)
   return tags
 }
 
 // API option -> the `shop` object the pages expect.
-// The id is stable across items, so the same shop groups together.
-function toShop(o, prefs) {
+// The id is stable across items, so the same shop groups together on page 3.
+function toShop(o, userLocation) {
   const { name, latitude, longitude } = o.location
   return {
     id: `${name}|${latitude},${longitude}`.toLowerCase(),
     name,
     type: o.isLocalBusiness ? 'Local business' : 'Shop', // the API doesn't send a shop type
-    distance: haversineMiles(prefs, o.location), // miles from the user, or null if unknown
+    latitude,
+    longitude,
+    // The API's distance is measured from the point it searched around; fall
+    // back to our own calculation only if it is missing.
+    distance: o.distanceMiles ?? haversineMiles(userLocation, o.location),
     tags: tagsFor(o),
   }
 }
 
 /**
- * Options for one list item, scored against the user's preferences.
- * `apiOptions` are the normalised options from getOptionResult for this item.
- * Returns options sorted best-first, each with { shop, price, score, matchedTags, label }.
- *
- * The API already applies the maximum distance and the quantity, so no
- * distance filtering or quantity maths happens here; `price` is price_gbp as sent.
+ * Options for one list item, in the API's order (best first).
+ * Each option is { key, optionId, productName, shop, unitPrice, quantity, price,
+ * matchedTags, isCheapest, isClosest, letter, rank, reason }, where `price` is
+ * the line total: the API's per-item price_gbp times the item quantity.
  */
-export function optionsForItem(item, prefs, apiOptions = []) {
-  const options = apiOptions.map((o) => ({
-    key: o.key,
-    optionId: o.optionId,
-    productName: o.name, // e.g. "Diet coke - 330ml"
-    shop: toShop(o, prefs),
-    unitPrice: o.priceGbp,
-    quantity: 1,
-    price: o.priceGbp,
-  }))
+export function optionsForItem(item, prefs, apiOptions = [], userLocation = null) {
+  const quantity = Number(item.quantity) > 0 ? Number(item.quantity) : 1
+  const options = apiOptions.map((o) => {
+    const shop = toShop(o, userLocation)
+    return {
+      key: o.key,
+      optionId: o.optionId,
+      productName: o.name, // e.g. "Diet coke - 330ml"
+      shop,
+      unitPrice: o.priceGbp,
+      quantity,
+      price: Math.round(o.priceGbp * quantity * 100) / 100,
+      matchedTags: prefs.values.map((v) => VALUE_TAG[v]).filter((t) => shop.tags.includes(t)),
+    }
+  })
   if (options.length === 0) return []
 
-  const cheapest = Math.min(...options.map((o) => o.price))
+  const cheapest = Math.min(...options.map((o) => o.unitPrice))
   const distances = options.map((o) => o.shop.distance).filter(Number.isFinite)
   const closest = distances.length ? Math.min(...distances) : null
-  const priorityWeights = [3, 2]
-  const valueWeights = [1, 0.6, 0.3] // values break ties; priorities lead
 
-  for (const o of options) {
-    let score = 0
-    prefs.priorities.forEach((p, i) => {
-      let fit
-      if (p === 'cheapest') {
-        fit = o.price > 0 ? cheapest / o.price : 1
-      } else {
-        // closest: no fit if we couldn't work out this shop's distance
-        const d = o.shop.distance
-        fit = Number.isFinite(d) && closest !== null ? (d === 0 ? 1 : closest / d) : 0
-      }
-      score += priorityWeights[i] * fit
-    })
-    o.matchedTags = prefs.values.map((v) => VALUE_TAG[v]).filter((t) => o.shop.tags.includes(t))
-    prefs.values.forEach((v, i) => {
-      if (o.shop.tags.includes(VALUE_TAG[v])) score += valueWeights[i]
-    })
-    o.score = score
-    o.isCheapest = o.price === cheapest
-    o.isClosest = closest !== null && o.shop.distance === closest
-  }
-
-  options.sort((a, b) => b.score - a.score)
   options.forEach((o, i) => {
+    o.isCheapest = o.unitPrice === cheapest
+    o.isClosest = closest !== null && o.shop.distance === closest
     o.letter = String.fromCharCode(65 + i) // A, B, C...
     o.rank = i === 0 ? 'best' : i === 1 ? 'runner' : 'other'
     o.reason = o.isCheapest ? 'Cheapest' : o.isClosest ? 'Closest' : o.matchedTags[0] || null
@@ -130,4 +109,4 @@ export function optionsForItem(item, prefs, apiOptions = []) {
   return options
 }
 
-export const formatGBP = (n) => `£${n.toFixed(2)}`
+export const formatGBP = (n) => `£${(Number.isFinite(n) ? n : 0).toFixed(2)}`

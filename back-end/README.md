@@ -136,7 +136,7 @@ Product search (`ProductRepository.FindProducts`) uses `LIKE '%word%'` on produc
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/submit-preference` | Save preference and shopping list, compute suggestions, return `session_id` |
-| GET | `/shopping-item/option-result?session_id=` | Up to 3 ranked options per shopping list item |
+| GET | `/shopping-item/option-result?session_id=` | Up to 10 ranked options per shopping list item |
 | POST | `/shopping-item/submit-option` | Save the option the user chose for each item |
 | GET | `/shopping-item/summary?session_id=` | Chosen option per item, total price and whether it fits the budget |
 | GET | `/health` | Health check |
@@ -147,7 +147,7 @@ Errors return `{"error": "..."}` with status 400 (bad input), 404 (unknown sessi
 
 - Every option uses `price_gbp` (the sheet mixes `price_gbp` and `price_per_unit_gbp`).
 - The summary always uses `selected_option` (the sheet uses `options` for the second item); it is `null` for items with no choice yet.
-- `option_id` is unique within each item (1, 2, 3), ordered best first; the sheet repeats ids.
+- `option_id` is unique within each item (1, 2, 3, ...), ordered best first; the sheet repeats ids.
 - `is_local_businesss` keeps the sheet's spelling so the frontend matches it.
 - Extra fields: `item_quantity` and `distance_miles` on results; `total_price_gbp`, `budget_gbp` and `within_budget` on the summary.
 - The sheet's example request has a trailing comma after `"organic": 3`, which is not valid JSON; clients must send valid JSON.
@@ -156,8 +156,8 @@ Errors return `{"error": "..."}` with status 400 (bad input), 404 (unknown sessi
 
 1. **Match:** the item text is split into words (filler words like "a", "of", "in" are dropped and plurals made singular). A product matches if more than half of those words appear in its name or keywords.
 2. **Filter:** drop products whose `price × quantity` is over `budget_gbp`. Pair each remaining product with up to 3 of its retailer's nearest stores within `maximum_distance_from_user_location_miles` (straight-line distance); each pair is one candidate, so the same product can be suggested at more than one branch.
-3. **Score:** match quality + the priority ranks (`best_price`, `closest_location`: rank 1 counts more than rank 2) + a smaller bonus for sustainability ranks (`local_business`, `recycleable`, `organic`: rank 1 to 3). The bonus is capped below the top priority's weight, so it breaks ties but never overrides the user's first priority. A rank of 0 means "don't care".
-4. **Return** the top 3, best first.
+3. **Score:** match quality + the priority ranks (`best_price`, `closest_location`: rank 1 counts more than rank 2) + a bonus for sustainability ranks (`local_business`, `recycleable`, `organic`: rank 1 to 3). The sustainability bonus is weighted the same as the priorities and can reach 2.0, so a product that meets several sustainability choices can rank above a cheaper or closer one. A rank of 0 means "don't care".
+4. **Return** the top 10 (`MaxOptionsPerItem`), best first.
 
 Suggestions are saved with the session as a snapshot, so later price changes don't alter a session's results or summary.
 

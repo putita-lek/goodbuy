@@ -19,8 +19,10 @@ Then open http://localhost:5173.
 
 ```
 src/
-  App.jsx                    page layout, step state, initial data
+  App.jsx                    page layout, step state, API calls between steps
   index.css                  Tailwind + design tokens (colours, font)
+  api/submitPreference.js    calls to the Go API (axios)
+  geocode.js                 typed location -> lat/long via postcodes.io
   components/
     Header.jsx               logo, nav, avatar
     Stepper.jsx              3-step progress bar
@@ -28,14 +30,22 @@ src/
     ShoppingList.jsx         3. shopping list (add / remove items)
     SidePanel.jsx            photo card + "Your shop, your way"
     ui.jsx                   shared Card, Field, OptionCard, RankBadge, ...
-    ReviewPage.jsx           step 2: 3 shop options per item (Best match / Runner up)
+    ReviewPage.jsx           step 2: ranked options per item (Best match / Runner up)
     SummaryPage.jsx          step 3: totals, shops grouped by store, budget, route
-  data/shops.js              mock shops + prices and the scoring/ranking logic
+    RouteMap.jsx             Leaflet map of the route
+  data/shops.js              adapts API options to the UI (quantity totals, tags, labels)
 public/basket.jpg            placeholder photo (replace with a full-res image)
 ```
 
 Priority cards are ranked in the order you click them (1 = highest).
-Shop data and prices are loaded from `POST /api/v1/shopping-plans` through
-`src/api/plan.js`. Set `VITE_API_BASE_URL` when the API is hosted on another
-origin. The old mock ranking logic remains in `src/data/shops.js` as reference
-data, but is no longer used to populate the review page.
+
+## Backend
+
+The app talks to the Go API in `../back-end` (start it with `docker compose up --build`
+there). Set `VITE_API_URL` when the API is not on `http://localhost:8080`.
+
+1. **Review my list** sends `POST /submit-preference`, then loads
+   `GET /shopping-item/option-result`. The API ranks the options; the page keeps its order.
+2. **See summary** saves the chosen option per item with `POST /shopping-item/submit-option`.
+
+Prices from the API are per item; the pages multiply them by the item quantity.

@@ -9,7 +9,7 @@ import SidePanel from './components/SidePanel.jsx'
 import ReviewPage from './components/ReviewPage.jsx'
 import SummaryPage from './components/SummaryPage.jsx'
 import { optionsForItem, apiOptionsForItem } from './data/shops.js'
-import { submitPreference, getOptionResult } from './api/submitPreference.js'
+import { submitPreference, getOptionResult, submitOption } from './api/submitPreference.js'
 
 const INITIAL_PREFS = {
   priorities: [], // order = rank
@@ -39,11 +39,17 @@ export default function App() {
   const [step, setStep] = useState(1)
   const [prefs, setPrefs] = useState(INITIAL_PREFS)
   const [items, setItems] = useState(INITIAL_ITEMS)
-  const [selections, setSelections] = useState({}) // itemId -> shopId the user picked
+  const [selections, setSelections] = useState({}) // itemId -> option key the user picked
   const [sessionId, setSessionId] = useState(null) // returned by POST /submit-preference
+  const [userLocation, setUserLocation] = useState(null) // the point the API searched around
   const [optionResult, setOptionResult] = useState(null) // returned by GET /shopping-item/option-result
+  // The list and preferences that produced optionResult. Pages 2 and 3 use these,
+  // so editing step 1 never mixes new items with old results.
+  const [submitted, setSubmitted] = useState({ prefs: INITIAL_PREFS, items: INITIAL_ITEMS })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   // Step 1 -> 2: submit the preferences, then fetch the options for that session.
   // Both calls must succeed before moving on; any error keeps the user on step 1
@@ -56,10 +62,13 @@ export default function App() {
     setSelections({}) // ...and so are manual shop picks
 
     try {
-      const id = await submitPreference(prefs, items)
+      const { sessionId: id, userLocation: located } = await submitPreference(prefs, items)
       const result = await getOptionResult(id)
       setSessionId(id)
+      setUserLocation(located)
       setOptionResult(result)
+      setSubmitted({ prefs, items })
+      setSaveError(null)
       setStep(2)
     } catch (err) {
       setSubmitError(err.message)
@@ -68,23 +77,37 @@ export default function App() {
     }
   }
 
-  // Step 2 -> 3: the data is already loaded, so just move on.
-  const handleSeeSummaryClicked = () => setStep(3)
-
-  // Options per item, built from the API's option_result and ranked by the
-  // current preferences. A manual pick wins if that shop is still an option;
+  // Options per submitted item, in the API's ranked order. A manual pick wins;
   // otherwise the best match is chosen.
   const plan = useMemo(
     () =>
-      items.map((item) => {
-        const apiOptions = apiOptionsForItem(optionResult, items, item)
-        const options = optionsForItem(item, prefs, apiOptions)
-        const chosen = options.find((o) => o.shop.id === selections[item.id]) ?? options[0] ?? null
-        return { item, options, chosen }
+      submitted.items.map((item, index) => {
+        const apiOptions = apiOptionsForItem(optionResult, index)
+        const options = optionsForItem(item, submitted.prefs, apiOptions, userLocation)
+        const chosen = options.find((o) => o.key === selections[item.id]) ?? options[0] ?? null
+        return { item, resultId: index + 1, options, chosen }
       }),
-    [items, prefs, selections, optionResult],
+    [submitted, selections, optionResult, userLocation],
   )
-  const total = plan.reduce((sum, p) => sum + (p.chosen?.price ?? 0), 0)
+  const total = Math.round(plan.reduce((sum, p) => sum + (p.chosen?.price ?? 0), 0) * 100) / 100
+
+  // Step 2 -> 3: save the chosen option for each item, then show the summary.
+  const handleSeeSummaryClicked = async () => {
+    if (isSaving) return
+    setIsSaving(true)
+    setSaveError(null)
+    try {
+      const choices = plan
+        .filter((p) => p.chosen)
+        .map((p) => ({ resultId: p.resultId, optionId: p.chosen.optionId }))
+      await submitOption(sessionId, choices)
+      setStep(3)
+    } catch (err) {
+      setSaveError(err.message)
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   useEffect(() => {
     window.scrollTo({ top: 0 })
@@ -143,17 +166,24 @@ export default function App() {
         {step === 2 && (
           <ReviewPage
             plan={plan}
-            prefs={prefs}
+            prefs={submitted.prefs}
             total={total}
-            sessionId={sessionId}
-            onSelect={(itemId, shopId) => setSelections((s) => ({ ...s, [itemId]: shopId }))}
+            onSelect={(itemId, optionKey) => setSelections((s) => ({ ...s, [itemId]: optionKey }))}
             onBack={() => setStep(1)}
             onNext={handleSeeSummaryClicked}
+            isSaving={isSaving}
+            saveError={saveError}
           />
         )}
 
         {step === 3 && (
-          <SummaryPage plan={plan} prefs={prefs} total={total} onBack={() => setStep(2)} />
+          <SummaryPage
+            plan={plan}
+            prefs={submitted.prefs}
+            userLocation={userLocation}
+            total={total}
+            onBack={() => setStep(2)}
+          />
         )}
       </main>
 

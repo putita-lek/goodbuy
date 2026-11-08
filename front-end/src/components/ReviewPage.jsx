@@ -1,7 +1,7 @@
-import { ArrowLeft, ArrowRight, CircleCheck, Info, Leaf, MapPin, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CircleCheck, Info, Leaf, Loader2, MapPin, SlidersHorizontal, Sparkles } from 'lucide-react'
 import PageIntro from './PageIntro.jsx'
 import ItemIcon from './ItemIcon.jsx'
-import { PRIORITY_LABEL, VALUE_LABEL, driveMinutes, formatGBP } from '../data/shops.js'
+import { PRIORITY_LABEL, VALUE_LABEL, driveMinutes, formatGBP, formatMiles } from '../data/shops.js'
 
 function Chip({ icon: Icon, children }) {
   return (
@@ -66,12 +66,15 @@ function OptionCard({ option, selected, onSelect }) {
         <p className="mt-3 flex items-baseline gap-2">
           <span className="text-[28px] font-bold tracking-tight">{formatGBP(option.price)}</span>
           {option.quantity !== 1 && (
-            <span className="text-[13px] text-muted">{formatGBP(option.unitPrice)} each</span>
+            <span className="text-[13px] text-muted">
+              {option.quantity} × {formatGBP(option.unitPrice)}
+            </span>
           )}
         </p>
         <p className="mt-2 flex items-center gap-1.5 text-[13px] text-muted">
           <MapPin className="size-3.5" strokeWidth={1.8} />
-          {shop.distance} mi · {driveMinutes(shop.distance)} min drive
+          {formatMiles(shop.distance)}
+          {Number.isFinite(shop.distance) && ` · ${driveMinutes(shop.distance)} min drive`}
         </p>
         <div className="mt-4 flex flex-wrap gap-1.5">
           {shop.tags.map((t) => (
@@ -83,7 +86,7 @@ function OptionCard({ option, selected, onSelect }) {
   )
 }
 
-export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNext }) {
+export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNext, isSaving, saveError }) {
   const budget = parseFloat(prefs.budget) || 0
   const remaining = budget - total
   const usedPct = budget ? Math.min(100, (total / budget) * 100) : 0
@@ -129,16 +132,17 @@ export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNex
             </div>
             {options.length === 0 ? (
               <p className="rounded-xl border border-dashed border-line bg-white p-5 text-sm text-muted">
-                No shops stock this within {prefs.maxDistance} miles. Try increasing your maximum distance.
+                No matching product within {prefs.maxDistance} miles and your budget. Try a
+                larger distance, a higher budget or a different description.
               </p>
             ) : (
               <div className="grid gap-4 md:grid-cols-3">
                 {options.map((o) => (
                   <OptionCard
-                    key={o.shop.id}
+                    key={o.key}
                     option={o}
-                    selected={chosen?.shop.id === o.shop.id}
-                    onSelect={() => onSelect(item.id, o.shop.id)}
+                    selected={chosen?.key === o.key}
+                    onSelect={() => onSelect(item.id, o.key)}
                   />
                 ))}
               </div>
@@ -149,8 +153,14 @@ export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNex
 
       <p className="mt-8 flex items-center gap-2 text-[13px] text-muted">
         <Info className="size-4" strokeWidth={1.6} />
-        Illustrative prices for your quantities. Availability and final in-store prices may vary.
+        Prices are for your quantities. Availability and final in-store prices may vary.
       </p>
+
+      {saveError && (
+        <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[15px] text-red-700">
+          {saveError}
+        </p>
+      )}
 
       {/* Sticky total bar */}
       <div className="sticky bottom-0 z-10 mx-[calc(50%-50vw)] mt-10 border-t border-line bg-white/95 py-4 backdrop-blur">
@@ -186,10 +196,18 @@ export default function ReviewPage({ plan, prefs, total, onSelect, onBack, onNex
           <button
             type="button"
             onClick={onNext}
-            disabled={missing === plan.length}
-            className="flex items-center gap-2 rounded-lg bg-brand-600 px-6 py-3 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+            disabled={missing === plan.length || isSaving}
+            className="flex items-center gap-2 rounded-lg bg-brand-600 px-6 py-3 font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            See summary <ArrowRight className="size-5" />
+            {isSaving ? (
+              <>
+                Saving… <Loader2 className="size-5 animate-spin" />
+              </>
+            ) : (
+              <>
+                See summary <ArrowRight className="size-5" />
+              </>
+            )}
           </button>
         </div>
       </div>

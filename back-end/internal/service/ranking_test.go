@@ -104,17 +104,35 @@ func TestRankCandidates_WeakMatchExcluded(t *testing.T) {
 	}
 }
 
-func TestRankCandidates_PriceBeatsSustainability(t *testing.T) {
+// sustainabilitySample: an organic, recyclable product at a local business, and a
+// cheaper plain one at a chain, both at the same distance.
+func sustainabilitySample() ([]models.Store, []models.Product) {
 	stores := []models.Store{store(1, 1, "", 55.95, -3.19, true), store(2, 2, "", 55.95, -3.19, false)}
 	organic := product(1, 1, "Organic rice flour", "", 2.95)
 	organic.IsOrganic, organic.IsRecyclable = true, true
-	products := []models.Product{organic, product(2, 2, "Rice flour", "", 1.80)}
+	return stores, []models.Product{organic, product(2, 2, "Rice flour", "", 1.80)}
+}
+
+func TestRankCandidates_PriceWinsWithoutSustainability(t *testing.T) {
+	stores, products := sustainabilitySample()
+	pref := basePref()
+	pref.PreferencePriority = dto.PreferencePriority{BestPrice: 1, ClosestLocation: 2}
+	got := RankCandidates(dto.ShoppingItem{ItemName: "rice flour"}, products, stores, pref)
+	if len(got) != 2 || got[0].Product.ID != 2 {
+		t.Fatalf("expected cheaper product first with no sustainability ranks, got %+v", got)
+	}
+}
+
+// sustainabilityWeight is 1.0, so meeting all three sustainability choices (bonus 2.0)
+// outweighs being the cheapest (1.0) even when best_price is rank 1.
+func TestRankCandidates_SustainabilityCanOutrankPrice(t *testing.T) {
+	stores, products := sustainabilitySample()
 	pref := basePref()
 	pref.PreferencePriority = dto.PreferencePriority{BestPrice: 1, ClosestLocation: 2}
 	pref.PreferenceSustainability = dto.PreferenceSustainability{LocalBusiness: 1, Recyclable: 2, Organic: 3}
 	got := RankCandidates(dto.ShoppingItem{ItemName: "rice flour"}, products, stores, pref)
-	if len(got) != 2 || got[0].Product.ID != 2 {
-		t.Fatalf("expected cheaper product first when best_price is rank 1, got %+v", got)
+	if len(got) != 2 || got[0].Product.ID != 1 {
+		t.Fatalf("expected organic local product first when all sustainability ranks are set, got %+v", got)
 	}
 }
 
