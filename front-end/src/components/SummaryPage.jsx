@@ -27,7 +27,7 @@ function sustainabilityScore(plan, prefs) {
   const chosen = plan.filter((p) => p.chosen)
   if (!tags.length || !chosen.length) return null
   const hits = chosen.reduce((n, p) => n + tags.filter((t) => p.chosen.shop.tags.includes(t)).length, 0)
-  return Math.round((5 * hits) / (chosen.length * tags.length))
+  return Math.round((100 * hits) / (chosen.length * tags.length))
 }
 
 function listAsText(groups, total) {
@@ -35,7 +35,7 @@ function listAsText(groups, total) {
   for (const g of groups) {
     lines.push(`${g.shop.name} (${formatMiles(g.shop.distance)})`)
     for (const { item, option } of g.lines)
-      lines.push(`  [ ] ${item.description} ×${item.quantity} – ${formatGBP(option.price)}`)
+      lines.push(`  [ ] ${option.productName} ×${item.quantity} – ${formatGBP(option.price)}`)
     lines.push(`  Subtotal: ${formatGBP(g.subtotal)}`, '')
   }
   lines.push(`Total: ${formatGBP(total)}`)
@@ -89,7 +89,7 @@ function ShopCard({ group, isMain }) {
                     <ItemIcon description={item.description} />
                   </span>
                   <div>
-                    <p className="text-[15px] font-medium">{item.description}</p>
+                    <p className="text-[15px] font-medium">{option.productName}</p>
                     {option.matchedTags.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
                         {option.matchedTags.map((t) => (
@@ -205,7 +205,7 @@ export default function SummaryPage({ plan, prefs, userLocation, total, onBack }
         <Stat label="Stores to visit" value={groups.length} sub={join(groups.map((g) => g.shop.name))} />
         <Stat
           label="Sustainability score"
-          value={score === null ? '—' : `${score}/5 leaves`}
+          value={score === null ? '—' : `${score}% sustainable`}
           sub={
             prefs.values.length
               ? `${prefs.values.map((v) => VALUE_LABEL[v]).join(', ')} choices`
