@@ -2,13 +2,20 @@ import { useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { Card, Field, Label, SectionTitle } from './ui.jsx'
 
+const MAX_ITEMS = 10
+const MAX_DESCRIPTION_LENGTH = 30
+
 export default function ShoppingList({ items, onChange }) {
   const [description, setDescription] = useState('')
   const [quantity, setQuantity] = useState('1')
 
   const qty = quantity.trim() === "" ? NaN : Number(quantity)
   const qtyValid = Number.isFinite(qty) && qty > 0
-  const canAdd = description.trim() !== '' && qtyValid
+  const canAdd =
+    items.length < MAX_ITEMS &&
+    description.trim() !== '' &&
+    description.length <= MAX_DESCRIPTION_LENGTH &&
+    qtyValid
 
   const addItem = (e) => {
     e.preventDefault()
@@ -74,9 +81,14 @@ export default function ShoppingList({ items, onChange }) {
           <Field
             id="item-description"
             placeholder="e.g. Greek yoghurt"
+            maxLength={MAX_DESCRIPTION_LENGTH}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
+          <p className="mt-1 text-right text-xs text-muted" 
+          >
+            {description.length}/{MAX_DESCRIPTION_LENGTH}
+          </p>
         </div>
         <div>
           <Label htmlFor="item-quantity">Quantity</Label>
@@ -96,6 +108,9 @@ export default function ShoppingList({ items, onChange }) {
           Add item <Plus className="size-5" />
         </button>
       </form>
+      {items.length >= MAX_ITEMS && (
+        <p className="mt-3 text-[15px] text-red-600">You can add up to {MAX_ITEMS} items.</p>
+      )}
     </Card>
   )
 }

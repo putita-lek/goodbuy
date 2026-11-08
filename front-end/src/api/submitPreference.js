@@ -1,5 +1,8 @@
 import axios from 'axios'
 
+const MAX_ITEMS = 10
+const MAX_ITEM_NAME_LENGTH = 30
+
 // In production VITE_API_URL is "/api" (see .env.production): the Cloudflare
 // Worker serving this site forwards /api/* to the Go API.
 const api = axios.create({
@@ -163,6 +166,10 @@ export async function getOptionResult(sessionId) {
 export async function submitPreference(prefs, items) {
   try {
     if (!items.length) throw new Error('Add at least one item to your list.')
+    if (items.length > MAX_ITEMS) throw new Error(`You can add up to ${MAX_ITEMS} items.`)
+    if (items.some((item) => item.description.trim().length > MAX_ITEM_NAME_LENGTH)) {
+      throw new Error(`Item descriptions must be ${MAX_ITEM_NAME_LENGTH} characters or fewer.`)
+    }
 
     let userLocation
     if (prefs.latitude != null && prefs.longitude != null) {
