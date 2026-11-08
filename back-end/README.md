@@ -11,7 +11,7 @@ Go Fiber + GORM + MySQL API that suggests where to buy each item on a shopping l
 
 ## Run
 
-With Docker (starts MySQL and the API, and seeds Edinburgh retailers and their stores; products come from the Kaggle import below):
+With Docker (starts MySQL and the API, and seeds Edinburgh retailers, their stores, and mock products for Real Foods and Edinburgh Farmers' Market; chain products come from the Kaggle import below):
 
 ```bash
 docker compose up --build
@@ -26,19 +26,31 @@ go run ./cmd/server
 
 Run unit tests: `go test ./...`. Example calls are in `requests.http`.
 
+### Start again with a clean database
+
+`cmd/reset-db` empties every table (retailers, stores, products, prices and saved sessions) but keeps the tables. It asks you to type `yes` first; pass `-yes` to skip that. It uses the same `DB_*` variables as the server. From `back-end/`, with MySQL running:
+
+```bash
+make reset-db
+```
+
+Then seed again with `make run-seed` (or restart the API, which seeds on startup), and re-run the Kaggle import if you want chain products.
+
+`make run-seed` (`cmd/seed`) creates the tables if needed and runs the seed without starting the API, whatever `SEED_DATA` says. Like the startup seed, it only adds retailers and stores to an empty `retailers` table and mock products to retailers that have none, so running it twice is harmless.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `8080` | HTTP port |
 | `DB_HOST` / `DB_PORT` | `127.0.0.1` / `3306` | MySQL address |
 | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | `goodbuy` | MySQL credentials and database |
-| `SEED_DATA` | `true` | Seed retailers and Edinburgh stores when the `retailers` table is empty |
+| `SEED_DATA` | `true` | On startup, seed retailers and Edinburgh stores when the `retailers` table is empty, and add mock products to Real Foods and Edinburgh Farmers' Market if they have none |
 | `CORS_ORIGINS` | `*` | Allowed browser origins for the website |
 
 ## Importing real supermarket prices (Kaggle)
 
 The seed creates retailers and stores but no products. `cmd/import-kaggle` loads real prices from the Kaggle dataset [Time Series UK Supermarket Data](https://www.kaggle.com/datasets/declanmcalinden/time-series-uk-supermarket-data) (Aldi, ASDA, Morrisons, Sainsbury's and Tesco).
 
-> **The prices are from 2024, not today.** The dataset has daily snapshots from 9 Jan to 13 Apr 2024 and is not updated. Each imported price stores its `price_date`, so the app can show how old a price is. Lidl, Sainsbury's Local, Real Foods and the farmers' market are not imported, so they have no products unless you add some.
+> **The prices are from 2024, not today.** The dataset has daily snapshots from 9 Jan to 13 Apr 2024 and is not updated. Each imported price stores its `price_date`, so the app can show how old a price is. Lidl and Sainsbury's Local are not in the dataset, so they have no products unless you add some. Real Foods and Edinburgh Farmers' Market get 10 **mock** products each from the seed (`source = 'mock'`): the names and prices are invented for testing, not taken from the shops.
 
 ### 1. Get the files
 
@@ -66,6 +78,8 @@ Start the database and API first, so the tables exist and the retailers and stor
 ```bash
 go run ./cmd/import-kaggle -dir ../kaggle
 ```
+
+`make run-import-kaggle` instead starts from scratch: it empties every table (`reset-db`, asks you to type `yes`; saved sessions are deleted too), seeds retailers, stores and mock products (`run-seed`), then imports.
 
 The command reads the same `DB_*` variables as the server, and their defaults match `docker-compose.yml`, which publishes MySQL on `localhost:3306`. A full import takes under a minute and adds about 103,000 products, each with one row in `product_prices`.
 
@@ -107,7 +121,7 @@ Each CSV row becomes a product and its price like this:
 | `date` | `product_prices.price_date` | |
 | none | `products.is_organic` | True when the name contains "organic" |
 | none | `products.is_recyclable` | Always false, because the dataset doesn't record packaging |
-| none | `products.source` | Always `kaggle`; hand-entered products have an empty `source` |
+| none | `products.source` | Always `kaggle`; seeded mock products have `mock`, hand-entered ones an empty `source` |
 
 A few names count as the same under MySQL's case- and accent-insensitive collation (e.g. "Café" and "Cafe"); only the first one is kept.
 
@@ -162,6 +176,8 @@ On startup, catalogue tables from earlier designs are dropped (old `stores`/`pro
 ```
 cmd/server         entry point
 cmd/import-kaggle  one-off import of the Kaggle supermarket prices
+cmd/reset-db       empty every table so the seed runs again
+cmd/seed           run the seed without starting the API
 internal/config    environment config
 internal/database  connection and migrations
 internal/models    GORM models
@@ -169,5 +185,5 @@ internal/dto       request and response JSON
 internal/repository database access
 internal/service   matching, ranking and session logic
 internal/handler   Fiber routes
-internal/seed      retailers and Edinburgh stores
+internal/seed      retailers, Edinburgh stores and mock local products
 ```
