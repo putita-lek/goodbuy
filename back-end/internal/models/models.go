@@ -1,34 +1,62 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
-// Store is a physical shop where products are sold.
-type Store struct {
-	ID              uint    `gorm:"primaryKey"`
-	Name            string  `gorm:"size:255;not null"`
-	Latitude        float64 `gorm:"not null"`
-	Longitude       float64 `gorm:"not null"`
-	IsLocalBusiness bool    `gorm:"not null;default:false"`
+// Retailer is a brand or chain (e.g. "Sainsbury's"), or a single independent business.
+type Retailer struct {
+	ID   uint   `gorm:"primaryKey"`
+	Name string `gorm:"size:255;not null;uniqueIndex"`
+	// IsLocalBusiness describes the business as a whole, so it lives here rather than on each branch.
+	IsLocalBusiness bool `gorm:"not null;default:false"`
+	Stores          []Store
 	Products        []Product
 }
 
-// Product is a single product item sold at one store at one price.
+// Store is one physical branch of a retailer.
+type Store struct {
+	ID         uint `gorm:"primaryKey"`
+	RetailerID uint `gorm:"not null;index"`
+	Retailer   Retailer
+	BranchName string  `gorm:"size:255;not null"` // e.g. "Cameron Toll"
+	Format     string  `gorm:"size:50"`           // e.g. "superstore", "local", "express"
+	Address    string  `gorm:"size:512"`
+	Postcode   string  `gorm:"size:16;index"`
+	Latitude   float64 `gorm:"not null;index:idx_store_geo"`
+	Longitude  float64 `gorm:"not null;index:idx_store_geo"`
+}
+
+// DisplayName is the retailer name followed by the branch name, e.g. "Sainsbury's Cameron Toll".
+func (s Store) DisplayName() string {
+	return strings.TrimSpace(s.Retailer.Name + " " + s.BranchName)
+}
+
+// Product is a catalogue item a retailer sells. It is sold at all of the retailer's
+// stores at one chain-wide price, kept in ProductPrice.
 type Product struct {
-	ID           uint    `gorm:"primaryKey"`
-	Name         string  `gorm:"size:255;not null;index"`
-	Keywords     string  `gorm:"size:512"` // extra search terms, space separated
-	PriceGBP     float64 `gorm:"not null"`
-	StoreID      uint    `gorm:"not null;index"`
-	Store        Store
-	IsRecyclable bool `gorm:"not null;default:false"`
-	IsOrganic    bool `gorm:"not null;default:false"`
+	ID           uint `gorm:"primaryKey"`
+	RetailerID   uint `gorm:"not null;uniqueIndex:idx_retailer_product"`
+	Retailer     Retailer
+	Name         string       `gorm:"size:255;not null;index;uniqueIndex:idx_retailer_product"`
+	Keywords     string       `gorm:"size:512"` // extra search terms, space separated
+	IsRecyclable bool         `gorm:"not null;default:false"`
+	IsOrganic    bool         `gorm:"not null;default:false"`
+	Price        ProductPrice `gorm:"constraint:OnDelete:CASCADE"`
 
 	// Optional fields filled by the Kaggle import (cmd/import-kaggle).
+	IsOwnBrand bool   `gorm:"not null;default:false"`
+	Source     string `gorm:"size:32;index"` // "" for hand-entered data, "kaggle" for imported rows
+}
+
+// ProductPrice is the current price of a product, the same at every store of its retailer.
+type ProductPrice struct {
+	ProductID    uint       `gorm:"primaryKey;autoIncrement:false"`
+	PriceGBP     float64    `gorm:"not null"`
 	UnitPriceGBP *float64   // price per Unit, nil when unknown
-	Unit         string     `gorm:"size:16"` // e.g. kg, unit
-	IsOwnBrand   bool       `gorm:"not null;default:false"`
-	PriceDate    *time.Time // day the price was recorded, nil for hand-entered data
-	Source       string     `gorm:"size:32;index"` // "" for seed data, "kaggle" for imported rows
+	Unit         string     `gorm:"size:16"` // e.g. kg, l, unit
+	PriceDate    *time.Time // day the price was recorded, nil when unknown
 }
 
 // ShoppingSession holds one submitted preference and its suggested options.
@@ -58,6 +86,7 @@ type SessionItemOption struct {
 	SessionItemID   uint `gorm:"not null;uniqueIndex:idx_item_option"`
 	OptionID        int  `gorm:"not null;uniqueIndex:idx_item_option"`
 	ProductID       uint
+	StoreID         uint
 	OptionName      string `gorm:"size:255;not null"`
 	PriceGBP        float64
 	StoreName       string `gorm:"size:255"`

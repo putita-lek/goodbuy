@@ -20,7 +20,8 @@ var (
 )
 
 type ProductFinder interface {
-	FindByAnyToken(tokens []string) ([]models.Product, error)
+	FindStores(area repository.Area) ([]models.Store, error)
+	FindProducts(tokens []string, retailerIDs []uint) ([]models.Product, error)
 }
 
 type SessionStore interface {
@@ -81,9 +82,27 @@ func (s *ShoppingService) SubmitPreference(req dto.SubmitPreferenceRequest) (uin
 		return 0, err
 	}
 
+	area := repository.Area{
+		Latitude:    req.UserLocation.Latitude,
+		Longitude:   req.UserLocation.Longitude,
+		RadiusMiles: req.MaximumDistanceMiles,
+	}
+	stores, err := s.products.FindStores(area)
+	if err != nil {
+		return 0, err
+	}
+	seen := map[uint]bool{}
+	var retailerIDs []uint
+	for _, st := range stores {
+		if !seen[st.RetailerID] {
+			seen[st.RetailerID] = true
+			retailerIDs = append(retailerIDs, st.RetailerID)
+		}
+	}
+
 	session := &models.ShoppingSession{ID: id, PreferenceJSON: string(prefJSON)}
 	for i, item := range req.ShoppingItemList {
-		products, err := s.products.FindByAnyToken(Tokenize(item.ItemName))
+		products, err := s.products.FindProducts(Tokenize(item.ItemName), retailerIDs)
 		if err != nil {
 			return 0, err
 		}
@@ -92,18 +111,19 @@ func (s *ShoppingService) SubmitPreference(req dto.SubmitPreferenceRequest) (uin
 			qty = 1
 		}
 		si := models.SessionItem{ResultID: i + 1, ItemName: strings.TrimSpace(item.ItemName), Quantity: qty}
-		for j, c := range RankCandidates(item, products, req) {
+		for j, c := range RankCandidates(item, products, stores, req) {
 			si.Options = append(si.Options, models.SessionItemOption{
 				OptionID:        j + 1,
 				ProductID:       c.Product.ID,
+				StoreID:         c.Store.ID,
 				OptionName:      c.Product.Name,
-				PriceGBP:        c.Product.PriceGBP,
-				StoreName:       c.Product.Store.Name,
-				Latitude:        c.Product.Store.Latitude,
-				Longitude:       c.Product.Store.Longitude,
+				PriceGBP:        c.Product.Price.PriceGBP,
+				StoreName:       c.Store.DisplayName(),
+				Latitude:        c.Store.Latitude,
+				Longitude:       c.Store.Longitude,
 				DistanceMiles:   round2(c.DistanceMiles),
 				IsRecyclable:    c.Product.IsRecyclable,
-				IsLocalBusiness: c.Product.Store.IsLocalBusiness,
+				IsLocalBusiness: c.Store.Retailer.IsLocalBusiness,
 				IsOrganic:       c.Product.IsOrganic,
 				Score:           c.Score,
 			})

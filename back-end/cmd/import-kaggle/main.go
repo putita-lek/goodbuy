@@ -1,12 +1,12 @@
 // Command import-kaggle loads supermarket prices from the Kaggle dataset
-// "Time Series UK Supermarket Data" (All_Data_<Chain>.csv files) into the
-// products table.
+// "Time Series UK Supermarket Data" (All_Data_<Chain>.csv files).
 //
-// The dataset has prices per chain, not per store, so each chain's latest
-// prices are copied to every existing store whose name starts with that
-// chain's name (for example "Sainsbury's Cameron Toll" gets the Sainsbury's
-// prices). Re-running the command replaces previously imported rows; seed
-// products and other stores are left alone.
+// Each file belongs to one retailer. Each row becomes a product of that retailer
+// and its chain-wide price in product_prices (the dataset has no per-store prices).
+//
+// Re-running the command replaces the retailer's previously imported products
+// and prices; hand-entered products (source "") and other retailers are left
+// alone. Run the server once first (or the seed) so the retailers exist.
 package main
 
 import (
@@ -28,27 +28,25 @@ import (
 	"github.com/putita-lek/goodbuy-backend/internal/database"
 	"github.com/putita-lek/goodbuy-backend/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const source = "kaggle"
 
-// chain describes one CSV file and the store-name prefixes it applies to.
+// chain links one CSV file to the retailer (by exact name) it is imported into.
+// Sainsbury's Local is deliberately not listed: it gets no imported products.
 type chain struct {
 	file     string
-	prefixes []string
+	retailer string
 }
 
 var chains = []chain{
-	{"All_Data_Sains.csv", []string{"Sainsbury's", "Sainsburys"}},
-	{"All_Data_Tesco.csv", []string{"Tesco"}},
-	{"All_Data_Aldi.csv", []string{"Aldi"}},
-	{"All_Data_ASDA.csv", []string{"ASDA"}},
-	{"All_Data_Morrisons.csv", []string{"Morrisons"}},
+	{"All_Data_Sains.csv", "Sainsbury's"},
+	{"All_Data_Tesco.csv", "Tesco"},
+	{"All_Data_Aldi.csv", "Aldi"},
+	{"All_Data_ASDA.csv", "ASDA"},
+	{"All_Data_Morrisons.csv", "Morrisons"},
 }
-
-// Store names containing these words are convenience stores, which usually
-// charge more than the chain's main (online) prices.
-var convenienceWords = []string{"local", "express", "metro"}
 
 type row struct {
 	name, unit, keywords string
@@ -61,7 +59,6 @@ type row struct {
 func main() {
 	dir := flag.String("dir", "../kaggle", "folder containing the All_Data_*.csv files")
 	date := flag.String("date", "", "snapshot day to import as YYYYMMDD (default: latest day in each file)")
-	markup := flag.Float64("convenience-markup", 0, "percent added to prices for Local/Express/Metro stores, e.g. 8")
 	batch := flag.Int("batch", 1000, "rows per INSERT")
 	dryRun := flag.Bool("dry-run", false, "read and summarise the files without writing to the database")
 	flag.Parse()
@@ -73,7 +70,6 @@ func main() {
 	}
 
 	var db *gorm.DB
-	var stores []models.Store
 	if !*dryRun {
 		var err error
 		if db, err = database.Connect(config.Load().DSN()); err != nil {
@@ -81,9 +77,6 @@ func main() {
 		}
 		if err := database.Migrate(db); err != nil {
 			log.Fatalf("migrate: %v", err)
-		}
-		if err := db.Find(&stores).Error; err != nil {
-			log.Fatalf("load stores: %v", err)
 		}
 	}
 
@@ -103,23 +96,22 @@ func main() {
 			continue
 		}
 
-		targets := matchStores(stores, c.prefixes)
-		if len(targets) == 0 {
-			log.Printf("%s: no store named %q..., nothing imported (add a store for this chain first)",
-				c.file, c.prefixes[0])
+		var ret models.Retailer
+		err = db.Where("name = ?", c.retailer).First(&ret).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("%s: no retailer named %q, nothing imported (seed retailers first)", c.file, c.retailer)
 			continue
 		}
-		for _, st := range targets {
-			factor := 1.0
-			if isConvenience(st.Name) {
-				factor += *markup / 100
-			}
-			if err := replaceProducts(db, st, rows, factor, *batch); err != nil {
-				log.Fatalf("import into %q: %v", st.Name, err)
-			}
-			log.Printf("  -> %s: %d products", st.Name, len(rows))
-			total += len(rows)
+		if err != nil {
+			log.Fatalf("load retailer %q: %v", c.retailer, err)
 		}
+
+		n, err := importRetailer(db, ret, rows, *batch)
+		if err != nil {
+			log.Fatalf("import into %q: %v", c.retailer, err)
+		}
+		log.Printf("  -> %s: %d products with prices", c.retailer, n)
+		total += n
 	}
 	if !*dryRun {
 		log.Printf("done: %d products imported", total)
@@ -179,7 +171,7 @@ func readLatest(path, want string) (map[string]row, string, int, error) {
 			}
 		}
 
-		name := strings.Join(strings.Fields(rec[col["names"]]), " ")
+		name := truncate(strings.Join(strings.Fields(rec[col["names"]]), " "), 255)
 		price, err := strconv.ParseFloat(strings.TrimSpace(rec[col["prices_(£)"]]), 64)
 		if name == "" || err != nil || price <= 0 {
 			skipped++
@@ -223,33 +215,9 @@ func readLatest(path, want string) (map[string]row, string, int, error) {
 	return rows, day, skipped, nil
 }
 
-func matchStores(stores []models.Store, prefixes []string) []models.Store {
-	var out []models.Store
-	for _, s := range stores {
-		for _, p := range prefixes {
-			if strings.HasPrefix(strings.ToLower(s.Name), strings.ToLower(p)) {
-				out = append(out, s)
-				break
-			}
-		}
-	}
-	return out
-}
-
-func isConvenience(storeName string) bool {
-	for _, w := range strings.Fields(strings.ToLower(storeName)) {
-		for _, c := range convenienceWords {
-			if w == c {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// replaceProducts deletes the store's previously imported products and
-// inserts the new snapshot in one transaction.
-func replaceProducts(db *gorm.DB, st models.Store, rows map[string]row, factor float64, batch int) error {
+// importRetailer replaces the retailer's imported products and their prices in one
+// transaction, and returns the number of products written.
+func importRetailer(db *gorm.DB, ret models.Retailer, rows map[string]row, batch int) (int, error) {
 	keys := make([]string, 0, len(rows))
 	for k := range rows {
 		keys = append(keys, k)
@@ -259,35 +227,60 @@ func replaceProducts(db *gorm.DB, st models.Store, rows map[string]row, factor f
 	products := make([]models.Product, 0, len(rows))
 	for _, k := range keys {
 		r := rows[k]
-		day := r.date
-		p := models.Product{
-			Name:       truncate(r.name, 255),
+		products = append(products, models.Product{
+			RetailerID: ret.ID,
+			Name:       r.name,
 			Keywords:   truncate(r.keywords, 512),
-			PriceGBP:   round2(r.price * factor),
-			StoreID:    st.ID,
 			IsOrganic:  strings.Contains(strings.ToLower(r.name), "organic"),
 			IsOwnBrand: r.ownBrand,
-			Unit:       r.unit,
-			PriceDate:  &day,
 			Source:     source,
-		}
-		if r.unitPrice != nil {
-			up := round2(*r.unitPrice * factor)
-			p.UnitPriceGBP = &up
-		}
-		products = append(products, p)
+		})
 	}
 
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("store_id = ? AND source = ?", st.ID, source).Delete(&models.Product{}).Error; err != nil {
+	n := 0
+	err := db.Transaction(func(tx *gorm.DB) error {
+		imported := tx.Model(&models.Product{}).Select("id").Where("retailer_id = ? AND source = ?", ret.ID, source)
+		if err := tx.Where("product_id IN (?)", imported).Delete(&models.ProductPrice{}).Error; err != nil {
 			return err
 		}
-		return tx.Omit("Store").CreateInBatches(products, batch).Error
-	})
-}
+		if err := tx.Where("retailer_id = ? AND source = ?", ret.ID, source).Delete(&models.Product{}).Error; err != nil {
+			return err
+		}
 
-func round2(v float64) float64 {
-	return float64(int64(v*100+0.5)) / 100
+		// Names unique to Go can still clash under MySQL's case- and accent-insensitive
+		// collation (e.g. "Café" and "Cafe"), or with a hand-entered product: INSERT IGNORE
+		// skips those. (OnConflict{DoNothing} becomes "UPDATE id=id", which MySQL rejects.)
+		if err := tx.Omit(clause.Associations).Clauses(clause.Insert{Modifier: "IGNORE"}).
+			CreateInBatches(products, batch).Error; err != nil {
+			return err
+		}
+
+		// Read the ids back by name rather than trusting ids filled in by a batch insert.
+		var saved []models.Product
+		if err := tx.Select("id", "name").Where("retailer_id = ? AND source = ?", ret.ID, source).
+			Find(&saved).Error; err != nil {
+			return err
+		}
+
+		prices := make([]models.ProductPrice, 0, len(saved))
+		for _, p := range saved {
+			r, ok := rows[strings.ToLower(p.Name)]
+			if !ok {
+				continue
+			}
+			day := r.date
+			prices = append(prices, models.ProductPrice{
+				ProductID: p.ID, PriceGBP: r.price,
+				UnitPriceGBP: r.unitPrice, Unit: r.unit, PriceDate: &day,
+			})
+		}
+		if err := tx.CreateInBatches(prices, batch).Error; err != nil {
+			return err
+		}
+		n = len(prices)
+		return nil
+	})
+	return n, err
 }
 
 // truncate shortens s to at most n characters without splitting a UTF-8 character.

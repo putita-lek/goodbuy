@@ -11,6 +11,9 @@ import (
 const (
 	// MaxOptionsPerItem is how many suggestions are returned for each shopping list item.
 	MaxOptionsPerItem = 3
+	// MaxStoresPerProduct is how many of a retailer's stores (the nearest ones in range)
+	// a product can be suggested at.
+	MaxStoresPerProduct = 3
 	// MinMatchScore: a product must contain more than this share of the item's words to count as a match,
 	// so one generic shared word ("fruit" in "dragon fruit") is not enough.
 	MinMatchScore = 0.5
@@ -22,9 +25,11 @@ const (
 	sustainabilityWeight = 0.2 // local business / recyclable / organic
 )
 
-// Candidate is a product that matched a shopping list item, with its computed score.
+// Candidate is a product that matched a shopping list item, at one store of its
+// retailer, with its computed score. Product has Price loaded; Store has Retailer.
 type Candidate struct {
 	Product       models.Product
+	Store         models.Store
 	Match         float64
 	DistanceMiles float64
 	Score         float64
@@ -65,13 +70,35 @@ func boolScore(b bool) float64 {
 	return 0
 }
 
-// RankCandidates filters products for one shopping list item by distance and
+// RankCandidates matches products to one shopping list item, pairs each with up to
+// MaxStoresPerProduct of its retailer's nearest stores in range, drops those over
 // budget, scores them against the user's preference and returns the best ones.
-func RankCandidates(item dto.ShoppingItem, products []models.Product, pref dto.SubmitPreferenceRequest) []Candidate {
+func RankCandidates(item dto.ShoppingItem, products []models.Product, stores []models.Store, pref dto.SubmitPreferenceRequest) []Candidate {
 	queryTokens := Tokenize(item.ItemName)
 	qty := item.ItemQuantity
 	if qty <= 0 {
 		qty = 1
+	}
+
+	// Stores in range per retailer, nearest first.
+	type near struct {
+		store models.Store
+		dist  float64
+	}
+	byRetailer := map[uint][]near{}
+	for _, st := range stores {
+		dist := HaversineMiles(pref.UserLocation.Latitude, pref.UserLocation.Longitude, st.Latitude, st.Longitude)
+		if pref.MaximumDistanceMiles > 0 && dist > pref.MaximumDistanceMiles {
+			continue
+		}
+		byRetailer[st.RetailerID] = append(byRetailer[st.RetailerID], near{st, dist})
+	}
+	for id := range byRetailer {
+		ns := byRetailer[id]
+		sort.SliceStable(ns, func(i, j int) bool { return ns[i].dist < ns[j].dist })
+		if len(ns) > MaxStoresPerProduct {
+			byRetailer[id] = ns[:MaxStoresPerProduct]
+		}
 	}
 
 	var cands []Candidate
@@ -80,15 +107,12 @@ func RankCandidates(item dto.ShoppingItem, products []models.Product, pref dto.S
 		if match <= MinMatchScore {
 			continue
 		}
-		dist := HaversineMiles(pref.UserLocation.Latitude, pref.UserLocation.Longitude,
-			p.Store.Latitude, p.Store.Longitude)
-		if pref.MaximumDistanceMiles > 0 && dist > pref.MaximumDistanceMiles {
+		if pref.BudgetGBP > 0 && p.Price.PriceGBP*qty > pref.BudgetGBP {
 			continue
 		}
-		if pref.BudgetGBP > 0 && p.PriceGBP*qty > pref.BudgetGBP {
-			continue
+		for _, n := range byRetailer[p.RetailerID] {
+			cands = append(cands, Candidate{Product: p, Store: n.store, Match: match, DistanceMiles: n.dist})
 		}
-		cands = append(cands, Candidate{Product: p, Match: match, DistanceMiles: dist})
 	}
 	if len(cands) == 0 {
 		return nil
@@ -97,7 +121,7 @@ func RankCandidates(item dto.ShoppingItem, products []models.Product, pref dto.S
 	minPrice, maxPrice := math.Inf(1), math.Inf(-1)
 	minDist, maxDist := math.Inf(1), math.Inf(-1)
 	for _, c := range cands {
-		minPrice, maxPrice = math.Min(minPrice, c.Product.PriceGBP), math.Max(maxPrice, c.Product.PriceGBP)
+		minPrice, maxPrice = math.Min(minPrice, c.Product.Price.PriceGBP), math.Max(maxPrice, c.Product.Price.PriceGBP)
 		minDist, maxDist = math.Min(minDist, c.DistanceMiles), math.Max(maxDist, c.DistanceMiles)
 	}
 
@@ -107,9 +131,9 @@ func RankCandidates(item dto.ShoppingItem, products []models.Product, pref dto.S
 
 	for i := range cands {
 		c := &cands[i]
-		priority := wPrice*normalizeLowerIsBetter(c.Product.PriceGBP, minPrice, maxPrice) +
+		priority := wPrice*normalizeLowerIsBetter(c.Product.Price.PriceGBP, minPrice, maxPrice) +
 			wDist*normalizeLowerIsBetter(c.DistanceMiles, minDist, maxDist)
-		sustain := wLocal*boolScore(c.Product.Store.IsLocalBusiness) +
+		sustain := wLocal*boolScore(c.Store.Retailer.IsLocalBusiness) +
 			wRecycle*boolScore(c.Product.IsRecyclable) +
 			wOrganic*boolScore(c.Product.IsOrganic)
 		c.Score = relevanceWeight*c.Match + priorityGroupWeight*priority + sustainabilityWeight*sustain
@@ -119,7 +143,7 @@ func RankCandidates(item dto.ShoppingItem, products []models.Product, pref dto.S
 		if cands[i].Score != cands[j].Score {
 			return cands[i].Score > cands[j].Score
 		}
-		return cands[i].Product.PriceGBP < cands[j].Product.PriceGBP
+		return cands[i].Product.Price.PriceGBP < cands[j].Product.Price.PriceGBP
 	})
 	if len(cands) > MaxOptionsPerItem {
 		cands = cands[:MaxOptionsPerItem]

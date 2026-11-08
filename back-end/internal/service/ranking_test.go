@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/putita-lek/goodbuy-backend/internal/dto"
@@ -38,15 +39,32 @@ func TestHaversineMiles(t *testing.T) {
 	}
 }
 
+// product builds a priced product of retailer rid.
+func product(id, rid uint, name, keywords string, price float64) models.Product {
+	return models.Product{ID: id, RetailerID: rid, Name: name, Keywords: keywords,
+		Price: models.ProductPrice{ProductID: id, PriceGBP: price}}
+}
+
+func store(id, rid uint, branch string, lat, lng float64, local bool) models.Store {
+	return models.Store{ID: id, RetailerID: rid, BranchName: branch, Latitude: lat, Longitude: lng,
+		Retailer: models.Retailer{ID: rid, Name: fmt.Sprintf("R%d", rid), IsLocalBusiness: local}}
+}
+
+// sample: retailer 1 is near, retailer 2 (local) is further, retailer 3 is out of range.
+func sampleStores() []models.Store {
+	return []models.Store{
+		store(1, 1, "Near", 55.950, -3.190, false),
+		store(2, 2, "Far", 55.990, -3.190, true),
+		store(3, 3, "TooFar", 56.500, -3.190, false),
+	}
+}
+
 func sampleProducts() []models.Product {
-	near := models.Store{Name: "Near", Latitude: 55.950, Longitude: -3.190}
-	far := models.Store{Name: "Far", Latitude: 55.990, Longitude: -3.190, IsLocalBusiness: true}
-	tooFar := models.Store{Name: "TooFar", Latitude: 56.500, Longitude: -3.190}
 	return []models.Product{
-		{ID: 1, Name: "Milk 1L carton", Keywords: "milk carton", PriceGBP: 1.50, Store: near},
-		{ID: 2, Name: "Milk 1L carton", Keywords: "milk carton", PriceGBP: 0.90, Store: far},
-		{ID: 3, Name: "Milk 1L carton", Keywords: "milk carton", PriceGBP: 0.10, Store: tooFar},
-		{ID: 4, Name: "Jasmine rice", Keywords: "rice", PriceGBP: 1.00, Store: near},
+		product(1, 1, "Milk 1L carton", "milk carton", 1.50),
+		product(2, 2, "Milk 1L carton", "milk carton", 0.90),
+		product(3, 3, "Milk 1L carton", "milk carton", 0.10),
+		product(4, 1, "Jasmine rice", "rice", 1.00),
 	}
 }
 
@@ -61,7 +79,7 @@ func basePref() dto.SubmitPreferenceRequest {
 func TestRankCandidates_PriceFirst(t *testing.T) {
 	pref := basePref()
 	pref.PreferencePriority = dto.PreferencePriority{BestPrice: 1, ClosestLocation: 2}
-	got := RankCandidates(dto.ShoppingItem{ItemName: "a carton of milk", ItemQuantity: 2}, sampleProducts(), pref)
+	got := RankCandidates(dto.ShoppingItem{ItemName: "a carton of milk", ItemQuantity: 2}, sampleProducts(), sampleStores(), pref)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 candidates within distance, got %d", len(got))
 	}
@@ -73,31 +91,28 @@ func TestRankCandidates_PriceFirst(t *testing.T) {
 func TestRankCandidates_ClosestFirst(t *testing.T) {
 	pref := basePref()
 	pref.PreferencePriority = dto.PreferencePriority{BestPrice: 2, ClosestLocation: 1}
-	got := RankCandidates(dto.ShoppingItem{ItemName: "milk", ItemQuantity: 1}, sampleProducts(), pref)
+	got := RankCandidates(dto.ShoppingItem{ItemName: "milk", ItemQuantity: 1}, sampleProducts(), sampleStores(), pref)
 	if len(got) == 0 || got[0].Product.ID != 1 {
 		t.Fatalf("expected closest (id 1) first, got %+v", got)
 	}
 }
 
 func TestRankCandidates_WeakMatchExcluded(t *testing.T) {
-	products := []models.Product{{ID: 9, Name: "Gala apple", Keywords: "red apple fruit", PriceGBP: 0.5,
-		Store: models.Store{Latitude: 55.95, Longitude: -3.19}}}
-	if got := RankCandidates(dto.ShoppingItem{ItemName: "dragon fruit"}, products, basePref()); len(got) != 0 {
+	products := []models.Product{product(9, 1, "Gala apple", "red apple fruit", 0.5)}
+	if got := RankCandidates(dto.ShoppingItem{ItemName: "dragon fruit"}, products, sampleStores(), basePref()); len(got) != 0 {
 		t.Fatalf("dragon fruit should not match apples, got %+v", got)
 	}
 }
 
 func TestRankCandidates_PriceBeatsSustainability(t *testing.T) {
-	store := models.Store{Latitude: 55.95, Longitude: -3.19}
-	local := models.Store{Latitude: 55.95, Longitude: -3.19, IsLocalBusiness: true}
-	products := []models.Product{
-		{ID: 1, Name: "Organic rice flour", PriceGBP: 2.95, IsOrganic: true, IsRecyclable: true, Store: local},
-		{ID: 2, Name: "Rice flour", PriceGBP: 1.80, Store: store},
-	}
+	stores := []models.Store{store(1, 1, "", 55.95, -3.19, true), store(2, 2, "", 55.95, -3.19, false)}
+	organic := product(1, 1, "Organic rice flour", "", 2.95)
+	organic.IsOrganic, organic.IsRecyclable = true, true
+	products := []models.Product{organic, product(2, 2, "Rice flour", "", 1.80)}
 	pref := basePref()
 	pref.PreferencePriority = dto.PreferencePriority{BestPrice: 1, ClosestLocation: 2}
 	pref.PreferenceSustainability = dto.PreferenceSustainability{LocalBusiness: 1, Recyclable: 2, Organic: 3}
-	got := RankCandidates(dto.ShoppingItem{ItemName: "rice flour"}, products, pref)
+	got := RankCandidates(dto.ShoppingItem{ItemName: "rice flour"}, products, stores, pref)
 	if len(got) != 2 || got[0].Product.ID != 2 {
 		t.Fatalf("expected cheaper product first when best_price is rank 1, got %+v", got)
 	}
@@ -106,8 +121,33 @@ func TestRankCandidates_PriceBeatsSustainability(t *testing.T) {
 func TestRankCandidates_Budget(t *testing.T) {
 	pref := basePref()
 	pref.BudgetGBP = 2
-	got := RankCandidates(dto.ShoppingItem{ItemName: "milk", ItemQuantity: 2}, sampleProducts(), pref)
+	got := RankCandidates(dto.ShoppingItem{ItemName: "milk", ItemQuantity: 2}, sampleProducts(), sampleStores(), pref)
 	if len(got) != 1 || got[0].Product.ID != 2 {
 		t.Fatalf("expected only id 2 (0.90 x 2 within £2), got %+v", got)
+	}
+}
+
+func TestRankCandidates_NearestStoresPerProduct(t *testing.T) {
+	// Five stores of one retailer: the product is offered at the 3 nearest in range only.
+	stores := []models.Store{
+		store(1, 1, "A", 55.950, -3.190, false),
+		store(2, 1, "B", 55.955, -3.190, false),
+		store(3, 1, "C", 55.960, -3.190, false),
+		store(4, 1, "D", 55.965, -3.190, false),
+		store(5, 1, "TooFar", 56.500, -3.190, false),
+	}
+	pref := basePref()
+	pref.PreferencePriority = dto.PreferencePriority{ClosestLocation: 1}
+	got := RankCandidates(dto.ShoppingItem{ItemName: "milk"}, []models.Product{product(7, 1, "Milk 1L carton", "milk", 1.10)}, stores, pref)
+	if len(got) != MaxStoresPerProduct {
+		t.Fatalf("expected %d candidates, got %+v", MaxStoresPerProduct, got)
+	}
+	for i, want := range []string{"A", "B", "C"} {
+		if got[i].Store.BranchName != want {
+			t.Fatalf("candidate %d: expected store %s, got %s", i, want, got[i].Store.BranchName)
+		}
+	}
+	if name := got[0].Store.DisplayName(); name != "R1 A" {
+		t.Fatalf("unexpected display name %q", name)
 	}
 }
