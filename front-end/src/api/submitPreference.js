@@ -1,8 +1,11 @@
 import axios from 'axios'
 
+// In production VITE_API_URL is "/api" (see .env.production): the Cloudflare
+// Worker serving this site forwards /api/* to the Go API.
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080',
-  timeout: 15000,
+  // Generous, in case the free API host is waking up from sleep.
+  timeout: 60000,
   headers: { 'Content-Type': 'application/json' },
 })
 

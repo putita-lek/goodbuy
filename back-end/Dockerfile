@@ -1,12 +1,13 @@
 FROM golang:1.22-alpine AS build
 WORKDIR /src
-COPY go.* ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-# go mod tidy creates go.sum on the first build; commit go.sum once it exists.
-RUN go mod tidy && CGO_ENABLED=0 go build -o /out/goodbuy ./cmd/server
+RUN CGO_ENABLED=0 go build -o /out/goodbuy ./cmd/server
 
 FROM alpine:3.20
-RUN adduser -D -u 10001 app
+# CA certificates let the API verify TLS connections to a hosted database.
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
 USER app
 COPY --from=build /out/goodbuy /usr/local/bin/goodbuy
 EXPOSE 8080
