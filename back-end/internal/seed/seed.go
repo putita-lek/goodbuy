@@ -1,7 +1,10 @@
 package seed
 
 import (
+	"errors"
+	"fmt"
 	"log"
+	"sort"
 
 	"github.com/putita-lek/goodbuy-backend/internal/models"
 	"gorm.io/gorm"
@@ -178,8 +181,57 @@ var retailers = []retailer{
 	},
 }
 
-// Run inserts the retailers and stores when the retailers table is empty.
+// mockProduct is a made-up product with a made-up price, for retailers that the
+// Kaggle dataset does not cover. unitPrice is per unit (kg, l or unit).
+type mockProduct struct {
+	name, keywords   string
+	price, unitPrice float64
+	unit             string
+	recyclable       bool // packaging can be recycled; false for loose produce
+	organic          bool
+}
+
+const mockSource = "mock"
+
+// mockProducts are illustrative only: names, prices and attributes are invented,
+// not taken from the shops. Keyed by retailer name.
+var mockProducts = map[string][]mockProduct{
+	"Real Foods": {
+		{"Organic Jasmine Rice 1kg", "rice jasmine thai grain wholefood", 3.75, 3.75, "kg", true, true},
+		{"Organic Brown Rice Flour 500g", "rice flour baking gluten free", 2.95, 5.90, "kg", true, true},
+		{"Organic Oat Milk 1L", "oat milk plant dairy free carton", 1.85, 1.85, "l", true, true},
+		{"Organic Semi Skimmed Milk 1L", "milk semi skimmed dairy carton", 1.65, 1.65, "l", true, true},
+		{"Organic Gala Apples Loose", "apple fruit gala red", 3.20, 3.20, "kg", false, true},
+		{"Organic Porridge Oats 1kg", "oats porridge oat cereal breakfast", 2.60, 2.60, "kg", true, true},
+		{"Organic Red Lentils 500g", "lentil red pulse dal wholefood", 2.20, 4.40, "kg", true, true},
+		{"Organic Extra Virgin Olive Oil 500ml", "olive oil cooking glass bottle", 7.50, 15.00, "l", true, true},
+		{"Organic Smooth Peanut Butter 340g", "peanut butter spread nut glass jar", 3.95, 11.62, "kg", true, true},
+		{"Organic Free Range Eggs 6 Pack", "egg free range box", 3.40, 0.57, "unit", true, true},
+	},
+	"Edinburgh Farmers' Market": {
+		{"Free Range Eggs 12 Pack", "egg free range box", 4.00, 0.33, "unit", true, false},
+		{"Organic Whole Milk 1L Glass Bottle", "milk whole dairy glass bottle", 1.90, 1.90, "l", true, true},
+		{"Sourdough Loaf 800g", "bread sourdough loaf bakery", 4.50, 5.63, "kg", true, false},
+		{"Scottish Heather Honey 340g", "honey heather scottish glass jar", 7.50, 22.06, "kg", true, false},
+		{"Red Apples Loose", "apple fruit red", 2.80, 2.80, "kg", false, false},
+		{"Scottish Potatoes 2.5kg", "potato vegetable scottish paper sack", 2.50, 1.00, "kg", true, false},
+		{"Organic Carrots Loose", "carrot vegetable", 1.80, 1.80, "kg", false, true},
+		{"Aberdeen Angus Beef Mince 500g", "beef mince meat angus", 6.50, 13.00, "kg", false, false},
+		{"Scottish Smoked Salmon 200g", "salmon smoked fish scottish", 7.00, 35.00, "kg", false, false},
+		{"Mature Scottish Cheddar 250g", "cheese cheddar mature dairy", 4.20, 16.80, "kg", false, false},
+	},
+}
+
+// Run inserts the retailers and stores when the retailers table is empty, then
+// adds the mock products to any listed retailer that has no products yet.
 func Run(db *gorm.DB) error {
+	if err := seedRetailers(db); err != nil {
+		return err
+	}
+	return seedMockProducts(db)
+}
+
+func seedRetailers(db *gorm.DB) error {
 	var count int64
 	if err := db.Model(&models.Retailer{}).Count(&count).Error; err != nil {
 		return err
@@ -206,4 +258,46 @@ func Run(db *gorm.DB) error {
 		log.Printf("seeded %d retailers and %d stores", len(retailers), nStores)
 		return nil
 	})
+}
+
+func seedMockProducts(db *gorm.DB) error {
+	names := make([]string, 0, len(mockProducts))
+	for name := range mockProducts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		var ret models.Retailer
+		err := db.Where("name = ?", name).First(&ret).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var count int64
+		if err := db.Model(&models.Product{}).Where("retailer_id = ?", ret.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+
+		var products []models.Product
+		for _, m := range mockProducts[name] {
+			unitPrice := m.unitPrice
+			products = append(products, models.Product{
+				RetailerID: ret.ID, Name: m.name, Keywords: m.keywords,
+				IsRecyclable: m.recyclable, IsOrganic: m.organic, Source: mockSource,
+				Price: models.ProductPrice{PriceGBP: m.price, UnitPriceGBP: &unitPrice, Unit: m.unit},
+			})
+		}
+		// Creating the products also creates their Price rows (has-one association).
+		if err := db.Create(&products).Error; err != nil {
+			return fmt.Errorf("seed mock products for %q: %w", name, err)
+		}
+		log.Printf("seeded %d mock products for %s", len(products), name)
+	}
+	return nil
 }
