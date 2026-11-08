@@ -10,7 +10,7 @@ import (
 
 const (
 	// MaxOptionsPerItem is how many suggestions are returned for each shopping list item.
-	MaxOptionsPerItem = 3
+	MaxOptionsPerItem = 10
 	// MaxStoresPerProduct is how many of a retailer's stores (the nearest ones in range)
 	// a product can be suggested at.
 	MaxStoresPerProduct = 3
@@ -22,7 +22,7 @@ const (
 	priorityGroupWeight = 1.0 // best price / closest location
 	// Sustainability is secondary to the priorities: its maximum (0.4) stays below
 	// the top priority's full weight, so it breaks ties rather than overriding them.
-	sustainabilityWeight = 0.2 // local business / recyclable / organic
+	sustainabilityWeight = 1.0 // local business / recyclable / organic
 )
 
 // Candidate is a product that matched a shopping list item, at one store of its
